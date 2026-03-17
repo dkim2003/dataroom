@@ -1,104 +1,102 @@
-
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Space Launch Technologies — Virtual Data Room</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: var(--font-sans); }
-  .app { display: grid; grid-template-rows: 56px 1fr; min-height: 600px; }
-  .topbar { display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border-bottom: 0.5px solid var(--color-border-tertiary); background: var(--color-background-primary); }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f9f9f9; color: #1a1a1a; }
+  .app { display: grid; grid-template-rows: 56px 1fr; min-height: 100vh; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border-bottom: 0.5px solid #e5e5e5; background: #fff; }
   .topbar-left { display: flex; align-items: center; gap: 10px; }
-  .logo { width: 24px; height: 24px; background: var(--color-text-primary); border-radius: 4px; display: flex; align-items: center; justify-content: center; }
-  .logo svg { width: 14px; height: 14px; fill: var(--color-background-primary); }
-  .topbar-title { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
-  .topbar-sub { font-size: 12px; color: var(--color-text-secondary); }
-  .badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; background: var(--color-background-success); color: var(--color-text-success); }
-  .main { display: grid; grid-template-columns: 220px 1fr 300px; background: var(--color-background-tertiary); }
-  .sidebar { background: var(--color-background-primary); border-right: 0.5px solid var(--color-border-tertiary); padding: 16px 0; }
+  .logo { width: 24px; height: 24px; background: #1a1a1a; border-radius: 4px; display: flex; align-items: center; justify-content: center; }
+  .logo svg { width: 14px; height: 14px; fill: #fff; }
+  .topbar-title { font-size: 13px; font-weight: 500; }
+  .topbar-sub { font-size: 12px; color: #888; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; background: #e6f9f0; color: #1a7a4a; }
+  .main { display: grid; grid-template-columns: 220px 1fr 300px; background: #f5f5f5; height: calc(100vh - 56px); overflow: hidden; }
+  .sidebar { background: #fff; border-right: 0.5px solid #e5e5e5; padding: 16px 0; overflow-y: auto; }
   .sidebar-section { padding: 0 16px; margin-bottom: 20px; }
-  .sidebar-label { font-size: 10px; font-weight: 500; color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
-  .sidebar-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--border-radius-md); cursor: pointer; font-size: 13px; color: var(--color-text-secondary); transition: background 0.15s; margin-bottom: 2px; }
-  .sidebar-item:hover { background: var(--color-background-secondary); color: var(--color-text-primary); }
-  .sidebar-item.active { background: var(--color-background-secondary); color: var(--color-text-primary); font-weight: 500; }
+  .sidebar-label { font-size: 10px; font-weight: 500; color: #aaa; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+  .sidebar-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; color: #666; transition: background 0.15s; margin-bottom: 2px; }
+  .sidebar-item:hover { background: #f5f5f5; color: #1a1a1a; }
+  .sidebar-item.active { background: #f5f5f5; color: #1a1a1a; font-weight: 500; }
   .sidebar-icon { width: 16px; height: 16px; opacity: 0.6; flex-shrink: 0; }
   .content { padding: 20px; overflow-y: auto; }
   .content-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-  .content-title { font-size: 15px; font-weight: 500; color: var(--color-text-primary); }
-  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: var(--border-radius-md); font-size: 12px; font-weight: 500; cursor: pointer; border: 0.5px solid var(--color-border-secondary); background: var(--color-background-primary); color: var(--color-text-primary); transition: background 0.15s; }
-  .btn:hover { background: var(--color-background-secondary); }
-  .btn-primary { background: var(--color-text-primary); color: var(--color-background-primary); border-color: var(--color-text-primary); }
+  .content-title { font-size: 15px; font-weight: 500; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 8px; font-size: 12px; font-weight: 500; cursor: pointer; border: 0.5px solid #ddd; background: #fff; color: #1a1a1a; transition: background 0.15s; }
+  .btn:hover { background: #f5f5f5; }
+  .btn-primary { background: #1a1a1a; color: #fff; border-color: #1a1a1a; }
   .btn-primary:hover { opacity: 0.85; }
   .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px; }
-  .metric { background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 12px; }
-  .metric-label { font-size: 11px; color: var(--color-text-secondary); margin-bottom: 4px; }
-  .metric-value { font-size: 22px; font-weight: 500; color: var(--color-text-primary); }
+  .metric { background: #f5f5f5; border-radius: 8px; padding: 12px; }
+  .metric-label { font-size: 11px; color: #888; margin-bottom: 4px; }
+  .metric-value { font-size: 22px; font-weight: 500; }
   .doc-grid { display: flex; flex-direction: column; gap: 8px; }
-  .doc-card { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); padding: 12px 14px; display: flex; align-items: center; gap: 12px; cursor: pointer; transition: border-color 0.15s; }
-  .doc-card:hover { border-color: var(--color-border-secondary); }
-  .doc-card.selected { border-color: var(--color-border-primary); }
-  .doc-icon { width: 32px; height: 32px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
-  .doc-icon.pdf { background: var(--color-background-danger); }
-  .doc-icon.xlsx { background: var(--color-background-success); }
-  .doc-icon.docx { background: var(--color-background-info); }
+  .doc-card { background: #fff; border: 0.5px solid #e5e5e5; border-radius: 12px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; cursor: pointer; transition: border-color 0.15s; }
+  .doc-card:hover { border-color: #ccc; }
+  .doc-icon { width: 32px; height: 32px; border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .doc-icon.pdf { background: #fef2f2; }
+  .doc-icon.xlsx { background: #f0fdf4; }
   .doc-info { flex: 1; min-width: 0; }
-  .doc-name { font-size: 13px; font-weight: 500; color: var(--color-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .doc-meta { font-size: 11px; color: var(--color-text-secondary); margin-top: 2px; }
-  .doc-actions { display: flex; align-items: center; gap: 6px; }
+  .doc-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .doc-meta { font-size: 11px; color: #888; margin-top: 2px; }
   .tag { font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 500; }
-  .tag-nda { background: var(--color-background-warning); color: var(--color-text-warning); }
-  .tag-fin { background: var(--color-background-success); color: var(--color-text-success); }
-  .tag-legal { background: var(--color-background-info); color: var(--color-text-info); }
-  .checklist { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); padding: 14px; }
-  .checklist-title { font-size: 13px; font-weight: 500; color: var(--color-text-primary); margin-bottom: 12px; }
-  .check-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 0.5px solid var(--color-border-tertiary); }
+  .tag-nda { background: #fffbeb; color: #92400e; }
+  .tag-fin { background: #f0fdf4; color: #166534; }
+  .tag-legal { background: #eff6ff; color: #1e40af; }
+  .checklist { background: #fff; border: 0.5px solid #e5e5e5; border-radius: 12px; padding: 14px; }
+  .check-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 0.5px solid #f0f0f0; }
   .check-item:last-child { border-bottom: none; }
-  .check-box { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid var(--color-border-secondary); flex-shrink: 0; display: flex; align-items: center; justify-content: center; cursor: pointer; }
-  .check-box.done { background: var(--color-background-success); border-color: transparent; }
-  .check-box.done::after { content: ''; display: block; width: 8px; height: 5px; border-left: 1.5px solid var(--color-text-success); border-bottom: 1.5px solid var(--color-text-success); transform: rotate(-45deg) translate(1px, -1px); }
-  .check-text { font-size: 12px; color: var(--color-text-secondary); flex: 1; }
-  .check-text.done { text-decoration: line-through; color: var(--color-text-tertiary); }
-  .ai-panel { border-left: 0.5px solid var(--color-border-tertiary); background: var(--color-background-primary); display: flex; flex-direction: column; }
-  .ai-header { padding: 14px 16px; border-bottom: 0.5px solid var(--color-border-tertiary); display: flex; align-items: center; gap: 8px; }
-  .ai-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-text-success); }
-  .ai-title { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
-  .ai-sub { font-size: 11px; color: var(--color-text-secondary); margin-left: auto; }
-  .ai-messages { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; min-height: 0; max-height: 380px; }
+  .check-box { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid #ddd; flex-shrink: 0; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .check-box.done { background: #f0fdf4; border-color: transparent; }
+  .check-box.done::after { content: ''; display: block; width: 8px; height: 5px; border-left: 1.5px solid #16a34a; border-bottom: 1.5px solid #16a34a; transform: rotate(-45deg) translate(1px, -1px); }
+  .check-text { font-size: 12px; color: #666; flex: 1; }
+  .check-text.done { text-decoration: line-through; color: #aaa; }
+  .ai-panel { border-left: 0.5px solid #e5e5e5; background: #fff; display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+  .ai-header { padding: 14px 16px; border-bottom: 0.5px solid #e5e5e5; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .ai-dot { width: 8px; height: 8px; border-radius: 50%; background: #16a34a; }
+  .ai-title { font-size: 13px; font-weight: 500; }
+  .ai-sub { font-size: 11px; color: #888; margin-left: auto; }
+  .ai-messages { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
   .msg { max-width: 90%; }
   .msg-user { align-self: flex-end; }
   .msg-ai { align-self: flex-start; }
   .msg-bubble { padding: 8px 12px; border-radius: 12px; font-size: 12px; line-height: 1.5; }
-  .msg-user .msg-bubble { background: var(--color-text-primary); color: var(--color-background-primary); border-bottom-right-radius: 4px; }
-  .msg-ai .msg-bubble { background: var(--color-background-secondary); color: var(--color-text-primary); border-bottom-left-radius: 4px; }
-  .msg-time { font-size: 10px; color: var(--color-text-tertiary); margin-top: 3px; text-align: right; }
+  .msg-user .msg-bubble { background: #1a1a1a; color: #fff; border-bottom-right-radius: 4px; }
+  .msg-ai .msg-bubble { background: #f5f5f5; color: #1a1a1a; border-bottom-left-radius: 4px; }
+  .msg-time { font-size: 10px; color: #aaa; margin-top: 3px; text-align: right; }
   .msg-ai .msg-time { text-align: left; }
-  .ai-input-area { padding: 12px; border-top: 0.5px solid var(--color-border-tertiary); }
+  .ai-input-area { padding: 12px; border-top: 0.5px solid #e5e5e5; flex-shrink: 0; }
   .ai-input-row { display: flex; gap: 6px; }
-  .ai-input { flex: 1; padding: 8px 10px; font-size: 12px; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); background: var(--color-background-secondary); color: var(--color-text-primary); outline: none; font-family: var(--font-sans); }
-  .ai-input:focus { border-color: var(--color-border-primary); }
-  .send-btn { width: 32px; height: 32px; border-radius: var(--border-radius-md); background: var(--color-text-primary); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-  .send-btn svg { width: 14px; height: 14px; fill: var(--color-background-primary); }
+  .ai-input { flex: 1; padding: 8px 10px; font-size: 12px; border: 0.5px solid #ddd; border-radius: 8px; background: #f5f5f5; color: #1a1a1a; outline: none; font-family: inherit; }
+  .ai-input:focus { border-color: #999; }
+  .send-btn { width: 32px; height: 32px; border-radius: 8px; background: #1a1a1a; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .send-btn svg { width: 14px; height: 14px; fill: #fff; }
   .quick-prompts { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
-  .quick-btn { font-size: 10px; padding: 3px 8px; border-radius: 20px; border: 0.5px solid var(--color-border-secondary); background: var(--color-background-primary); color: var(--color-text-secondary); cursor: pointer; transition: all 0.15s; }
-  .quick-btn:hover { background: var(--color-background-secondary); color: var(--color-text-primary); }
-  .typing { display: flex; align-items: center; gap: 4px; padding: 8px 12px; background: var(--color-background-secondary); border-radius: 12px; border-bottom-left-radius: 4px; width: fit-content; }
-  .typing span { width: 5px; height: 5px; border-radius: 50%; background: var(--color-text-tertiary); animation: bounce 1.2s infinite; }
+  .quick-btn { font-size: 10px; padding: 3px 8px; border-radius: 20px; border: 0.5px solid #ddd; background: #fff; color: #666; cursor: pointer; transition: all 0.15s; }
+  .quick-btn:hover { background: #f5f5f5; color: #1a1a1a; }
+  .typing { display: flex; align-items: center; gap: 4px; padding: 8px 12px; background: #f5f5f5; border-radius: 12px; border-bottom-left-radius: 4px; width: fit-content; }
+  .typing span { width: 5px; height: 5px; border-radius: 50%; background: #aaa; animation: bounce 1.2s infinite; }
   .typing span:nth-child(2) { animation-delay: 0.2s; }
   .typing span:nth-child(3) { animation-delay: 0.4s; }
   @keyframes bounce { 0%,80%,100%{transform:translateY(0)} 40%{transform:translateY(-5px)} }
-  .upload-zone { border: 1.5px dashed var(--color-border-secondary); border-radius: var(--border-radius-lg); padding: 20px; text-align: center; cursor: pointer; transition: all 0.15s; margin-bottom: 16px; }
-  .upload-zone:hover { border-color: var(--color-border-primary); background: var(--color-background-secondary); }
-  .upload-text { font-size: 12px; color: var(--color-text-secondary); margin-top: 6px; }
-  .section-gap { margin-bottom: 16px; }
+  .upload-zone { border: 1.5px dashed #ddd; border-radius: 12px; padding: 20px; text-align: center; cursor: pointer; transition: all 0.15s; margin-bottom: 16px; }
+  .upload-zone:hover { border-color: #999; background: #f9f9f9; }
+  .upload-text { font-size: 12px; color: #888; margin-top: 6px; }
   .investors { display: flex; flex-direction: column; gap: 6px; }
-  .investor-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-md); }
+  .investor-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #fff; border: 0.5px solid #e5e5e5; border-radius: 8px; }
   .avatar { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; flex-shrink: 0; }
-  .investor-name { font-size: 12px; font-weight: 500; color: var(--color-text-primary); flex: 1; }
-  .investor-access { font-size: 11px; color: var(--color-text-secondary); }
+  .investor-name { font-size: 12px; font-weight: 500; flex: 1; }
+  .investor-access { font-size: 11px; color: #888; }
   .status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-  .online { background: var(--color-text-success); }
-  .offline { background: var(--color-border-secondary); }
-  .tab-row { display: flex; gap: 2px; margin-bottom: 16px; border-bottom: 0.5px solid var(--color-border-tertiary); }
-  .tab { font-size: 12px; padding: 8px 12px; cursor: pointer; color: var(--color-text-secondary); border-bottom: 2px solid transparent; margin-bottom: -0.5px; transition: all 0.15s; }
-  .tab.active { color: var(--color-text-primary); border-bottom-color: var(--color-text-primary); font-weight: 500; }
+  .online { background: #16a34a; }
+  .offline { background: #ddd; }
 </style>
-
+</head>
+<body>
 <div class="app">
   <div class="topbar">
     <div class="topbar-left">
@@ -112,10 +110,9 @@
     </div>
     <div style="display:flex;align-items:center;gap:10px;">
       <span class="badge">Fundraising Active</span>
-      <div class="avatar" style="background:var(--color-background-info);color:var(--color-text-info);width:30px;height:30px;font-size:12px;">MK</div>
+      <div class="avatar" style="background:#eff6ff;color:#1e40af;width:30px;height:30px;font-size:12px;">MK</div>
     </div>
   </div>
-
   <div class="main">
     <div class="sidebar">
       <div class="sidebar-section">
@@ -149,8 +146,7 @@
         </div>
       </div>
     </div>
-
-    <div class="content" id="main-content">
+    <div class="content">
       <div id="tab-documents">
         <div class="metrics">
           <div class="metric"><div class="metric-label">Documents</div><div class="metric-value">12</div></div>
@@ -159,31 +155,25 @@
         </div>
         <div class="content-header">
           <span class="content-title">Documents</span>
-          <div style="display:flex;gap:8px;">
-            <button class="btn" onclick="simulateUpload()">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
-              Upload
-            </button>
-          </div>
+          <button class="btn" onclick="simulateUpload()">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+            Upload
+          </button>
         </div>
-        <div class="upload-zone" onclick="simulateUpload()" id="upload-zone">
+        <div class="upload-zone" onclick="simulateUpload()">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin:0 auto;display:block;opacity:0.4;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
           <div class="upload-text">Drop files here or click to upload</div>
-          <div style="font-size:11px;color:var(--color-text-tertiary);margin-top:4px;">PDF, DOCX, XLSX supported</div>
+          <div style="font-size:11px;color:#aaa;margin-top:4px;">PDF, DOCX, XLSX supported</div>
         </div>
         <div class="doc-grid" id="doc-list"></div>
       </div>
-
       <div id="tab-diligence" style="display:none;">
         <div class="content-header">
           <span class="content-title">Due diligence checklist</span>
           <button class="btn btn-primary" onclick="automate()">AI automate</button>
         </div>
-        <div class="checklist">
-          <div id="checklist-items"></div>
-        </div>
+        <div class="checklist"><div id="checklist-items"></div></div>
       </div>
-
       <div id="tab-investors" style="display:none;">
         <div class="content-header">
           <span class="content-title">Investor access</span>
@@ -192,12 +182,11 @@
         <div class="investors" id="investor-list"></div>
       </div>
     </div>
-
     <div class="ai-panel">
       <div class="ai-header">
         <div class="ai-dot"></div>
-        <div class="ai-title">AI assistant</div>
-        <div class="ai-sub">Powered by Claude</div>
+        <div class="ai-title">Sol</div>
+        <div class="ai-sub">Engineered for Aerospace</div>
       </div>
       <div class="ai-messages" id="messages"></div>
       <div class="ai-input-area">
@@ -217,7 +206,6 @@
     </div>
   </div>
 </div>
-
 <script>
 const docs = [
   { name: 'Non-Disclosure Agreement.pdf', type: 'pdf', size: '245 KB', folder: 'legal', tag: 'nda', tagLabel: 'NDA', date: 'Mar 10' },
@@ -237,10 +225,10 @@ const checks = [
   { text: 'Data room index created', done: true },
 ];
 const investors = [
-  { name: 'Andreessen Horowitz', initials: 'AH', color: 'var(--color-background-info)', tc: 'var(--color-text-info)', access: 'Full access', online: true },
-  { name: 'Sequoia Capital', initials: 'SC', color: 'var(--color-background-success)', tc: 'var(--color-text-success)', access: 'Financial only', online: true },
-  { name: 'Y Combinator', initials: 'YC', color: 'var(--color-background-warning)', tc: 'var(--color-text-warning)', access: 'View only', online: false },
-  { name: 'Tiger Global', initials: 'TG', color: 'var(--color-background-danger)', tc: 'var(--color-text-danger)', access: 'Legal & Financial', online: false },
+  { name: 'Andreessen Horowitz', initials: 'AH', bg: '#eff6ff', tc: '#1e40af', access: 'Full access', online: true },
+  { name: 'Sequoia Capital', initials: 'SC', bg: '#f0fdf4', tc: '#166534', access: 'Financial only', online: true },
+  { name: 'Y Combinator', initials: 'YC', bg: '#fffbeb', tc: '#92400e', access: 'View only', online: false },
+  { name: 'Tiger Global', initials: 'TG', bg: '#fef2f2', tc: '#991b1b', access: 'Legal & Financial', online: false },
 ];
 const aiResponses = {
   'Summarize the NDA': "The Non-Disclosure Agreement covers mutual confidentiality obligations between Space Launch Technologies and the counterparty. Key terms: 2-year term, covers all technical and financial information, standard carve-outs for publicly available information. No red flags detected.",
@@ -255,15 +243,13 @@ function renderDocs(filter) {
   list.innerHTML = filtered.map((d, i) => `
     <div class="doc-card" onclick="selectDoc(${i})">
       <div class="doc-icon ${d.type}">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="1.5"><path d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
       </div>
       <div class="doc-info">
         <div class="doc-name">${d.name}</div>
         <div class="doc-meta">${d.size} · ${d.date}</div>
       </div>
-      <div class="doc-actions">
-        <span class="tag tag-${d.tag}">${d.tagLabel}</span>
-      </div>
+      <span class="tag tag-${d.tag}">${d.tagLabel}</span>
     </div>
   `).join('');
 }
@@ -278,7 +264,7 @@ function renderChecklist() {
 function renderInvestors() {
   document.getElementById('investor-list').innerHTML = investors.map(inv => `
     <div class="investor-row">
-      <div class="avatar" style="background:${inv.color};color:${inv.tc};">${inv.initials}</div>
+      <div class="avatar" style="background:${inv.bg};color:${inv.tc};">${inv.initials}</div>
       <div class="investor-name">${inv.name}</div>
       <div class="investor-access">${inv.access}</div>
       <div class="status-dot ${inv.online ? 'online' : 'offline'}"></div>
@@ -293,19 +279,12 @@ function showTab(tab) {
     el.classList.toggle('active', ['documents','diligence','investors'][i] === tab);
   });
 }
-function toggleCheck(i) {
-  checks[i].done = !checks[i].done;
-  renderChecklist();
-}
+function toggleCheck(i) { checks[i].done = !checks[i].done; renderChecklist(); }
 function automate() {
-  checks.forEach(c => { if (!c.done) { setTimeout(() => { c.done = true; renderChecklist(); }, Math.random() * 1500 + 300); } });
+  checks.forEach((c, i) => { if (!c.done) setTimeout(() => { checks[i].done = true; renderChecklist(); }, Math.random() * 1500 + 300); });
   addAIMessage("Automating due diligence review... I've cross-referenced your uploaded documents against the checklist. Marking completed items now. 3 items still require manual action — I'll flag the responsible parties.");
 }
-function filterDocs(folder) {
-  currentFilter = folder;
-  renderDocs(folder);
-  showTab('documents');
-}
+function filterDocs(folder) { currentFilter = folder; renderDocs(folder); showTab('documents'); }
 function selectDoc(i) {
   const doc = docs[i];
   addAIMessage(`Analyzing "${doc.name}"...\n\nDocument loaded. You can now ask me questions about this document, request a summary, or check it against your due diligence requirements.`);
@@ -346,16 +325,12 @@ function sendMsg() {
   if (!text) return;
   addUserMessage(text);
   input.value = '';
-  const response = aiResponses[text] || "I'm analyzing your dataroom documents. For a live deployment, I would use the Claude API to read your actual uploaded documents and provide specific answers based on their content.";
+  const response = aiResponses[text] || "I'm analyzing your dataroom documents. In the live version, I connect to the Claude API to read your actual uploaded documents and provide specific answers based on their real content.";
   addAIMessage(response);
 }
-function quickAsk(q) {
-  addUserMessage(q);
-  const response = aiResponses[q] || "Analyzing documents...";
-  addAIMessage(response);
-}
-addAIMessage("Hello. I'm your dataroom assistant. I can answer questions about uploaded documents, flag risks, check due diligence status, and manage investor access. How can I help?");
-renderDocs();
-renderChecklist();
-renderInvestors();
+function quickAsk(q) { addUserMessage(q); addAIMessage(aiResponses[q] || "Analyzing..."); }
+addAIMessage("Hey! I'm Sol, your data room assistant. I can answer questions about uploaded documents, flag risks, check due diligence status, and manage investor access. How can I help?");
+renderDocs(); renderChecklist(); renderInvestors();
 </script>
+</body>
+</html>
