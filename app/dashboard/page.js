@@ -19,6 +19,8 @@ export default function Dashboard() {
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadMessage, setUploadMessage] = useState('');
   const router = useRouter();
+  const [documents, setDocuments] = useState([]);
+  const [docsLoading, setDocsLoading] = useState(true);
 
   useEffect(() => {
     async function init() {
@@ -44,6 +46,7 @@ export default function Dashboard() {
       setUser(user);
       setProfile(profile);
       setLoading(false);
+      await loadDocuments()
     }
     init();
   }, []);
@@ -92,6 +95,45 @@ export default function Dashboard() {
 
     setUploadLoading(false)
   }
+
+  async function loadDocuments() {
+  const { data: { session } } = await supabase.auth.getSession()
+
+  const response = await fetch('/api/documents', {
+    headers: {
+      authorization: `Bearer ${session.access_token}`
+    }
+  })
+
+  const result = await response.json()
+
+  if (result.documents) {
+    setDocuments(result.documents)
+  }
+
+  setDocsLoading(false)
+}
+
+async function openDocument(path, fileName) {
+  const { data: { session } } = await supabase.auth.getSession()
+
+  const response = await fetch('/api/documents/signed-url', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${session.access_token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ path, fileName })
+  })
+
+  const result = await response.json()
+
+  if (result.signedUrl) {
+    window.open(result.signedUrl, '_blank')
+  } else {
+    alert('Access denied or error generating link.')
+  }
+}
 
   return (
     <div className="min-h-screen bg-gray-950 text-white">
@@ -295,6 +337,79 @@ export default function Dashboard() {
             </p>
           </div>
         )}
+        {/* Document Library */}
+<div className="mt-8">
+  <h2 className="text-white text-sm font-medium mb-4">Document Library</h2>
+
+  {docsLoading ? (
+    <p className="text-gray-500 text-sm">Loading documents...</p>
+  ) : documents.length === 0 ? (
+    <p className="text-gray-500 text-sm">No documents available yet.</p>
+  ) : (
+    <div className="space-y-6">
+      {/* Group documents by folder */}
+      {Object.entries(
+        documents.reduce((groups, doc) => {
+          // Extract the folder name from the path
+          // Path looks like: general/03_Product_Technology/04 Patents & IP/file.pdf
+          const parts = doc.path.split('/')
+          // Remove the first part (general/restricted) and the last part (filename)
+          const folder = parts.slice(1, -1).join(' / ') || 'General'
+          if (!groups[folder]) groups[folder] = []
+          groups[folder].push(doc)
+          return groups
+        }, {})
+      ).map(([folder, files]) => (
+        <div key={folder}>
+          <h3 className="text-gray-500 text-xs uppercase tracking-wider mb-2">
+            {folder}
+          </h3>
+          <div className="space-y-1">
+            {files.map((doc) => (
+              <div
+                key={doc.path}
+                className="flex items-center justify-between bg-gray-900 border border-gray-800 rounded-lg px-4 py-3"
+              >
+                <div className="flex items-center gap-3">
+                  {/* Lock icon for restricted files that pre-NDA users can't access */}
+                  {doc.restricted && !isPostNda && !isAdmin ? (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="1.5">
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                  ) : (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="1.5">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                      <polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                  )}
+                  <span className="text-sm text-gray-300">{doc.name}</span>
+                  {doc.restricted && (
+                    <span className="text-xs px-2 py-0.5 bg-gray-800 text-gray-500 rounded">
+                      Post-NDA
+                    </span>
+                  )}
+                </div>
+
+                {/* Show open button or NDA required message */}
+                {doc.restricted && !isPostNda && !isAdmin ? (
+                  <span className="text-xs text-gray-600">NDA required</span>
+                ) : (
+                  <button
+                    onClick={() => openDocument(doc.path, doc.name)}
+                    className="text-xs text-gray-400 hover:text-white transition-colors"
+                  >
+                    Open →
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )}
+</div>
       </div>
     </div>
   );
