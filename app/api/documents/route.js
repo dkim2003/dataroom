@@ -27,16 +27,15 @@ async function listAllFiles(prefix) {
     } else {
   // item.id exists — this is an actual file
   // Filter out Supabase's auto-generated placeholder files
-  if (item.name !== '.emptyFolderPlaceholder') {
-    files.push({
-      name: item.name,
-      path: `${prefix}/${item.name}`
-    })
-  }
+     if (item.name !== '.emptyFolderPlaceholder') {
+        files.push({
+            name: item.name,
+            path: `${prefix}/${item.name}`
+        })
+    }
 }
-  }
-
-  return files
+}
+return files
 }
 
 export async function GET(request) {
