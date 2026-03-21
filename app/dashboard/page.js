@@ -59,6 +59,40 @@ export default function Dashboard() {
   const isAdmin = user.email === 'contact@kimduhyun.com';
   const isPostNda = profile.role === 'post_nda';
 
+  async function handleUpload() {
+    if (!uploadFile || !uploadFolder) return
+    setUploadLoading(true)
+    setUploadMessage('')
+
+    const { data: { session } } = await supabase.auth.getSession()
+    
+    const formData = new FormData()
+    formData.append('file', uploadFile)
+    formData.append('folder', uploadFolder)
+    formData.append('isRestricted', uploadRestricted.toString())
+    
+    const response = await fetch('/api/upload', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${session.access_token}`
+      },
+      body: formData
+    })
+
+    const result = await response.json()
+
+    if (result.error) {
+      setUploadMessage('Error: ' + result.error)
+    } else {
+      setUploadMessage('File uploaded successfully.')
+      setUploadFile(null)
+      setUploadFolder('')
+      setUploadRestricted(false)
+    }
+
+    setUploadLoading(false)
+  }
+
   return (
     <div className="min-h-screen bg-gray-950 text-white">
       <div className="border-b border-gray-800 px-8 py-4 flex items-center justify-between">
