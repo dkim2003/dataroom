@@ -17,6 +17,7 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [pending, setPending] = useState(false);
+  const [rejected, setRejected] = useState(false);
   const router = useRouter();
 
   async function handleLogin(e) {
@@ -47,6 +48,13 @@ export default function LoginPage() {
       setLoading(false);
       return;
     }
+    
+    if (profile?.status === 'rejected') {
+      await supabase.auth.signOut();
+      setRejected(true);
+      setLoading(false);
+      return;
+    }
 
     router.push('/dashboard');
   }
@@ -74,29 +82,55 @@ export default function LoginPage() {
     setLoading(false);
   }
 
-  if (pending) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-950">
-        <div className="text-center max-w-sm px-6">
-          <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mx-auto mb-6">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="1.5">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-            </svg>
-          </div>
-          <h1 className="text-xl font-light text-white mb-3">Access Pending</h1>
-          <p className="text-gray-400 text-sm leading-relaxed">
-            Your account is awaiting approval. You will receive access once an administrator reviews your request.
-          </p>
-          <button
-            onClick={() => { setPending(false); setMode('login'); }}
-            className="mt-8 text-gray-500 text-sm hover:text-gray-300 transition-colors"
-          >
-            Back to sign in
-          </button>
+  if (rejected) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-950">
+      <div className="text-center max-w-sm px-6">
+        <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mx-auto mb-6">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="1.5">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="15" y1="9" x2="9" y2="15"/>
+            <line x1="9" y1="9" x2="15" y2="15"/>
+          </svg>
         </div>
+        <h1 className="text-xl font-light text-white mb-3">Access Denied</h1>
+        <p className="text-gray-400 text-sm leading-relaxed">
+          Your access request was not approved. Contact the administrator if you believe this is an error.
+        </p>
+        <button
+          onClick={() => { setRejected(false); setMode('login'); }}
+          className="mt-8 text-gray-500 text-sm hover:text-gray-300 transition-colors"
+        >
+          Back to sign in
+        </button>
       </div>
-    );
-  }
+    </div>
+  );
+}
+
+if (pending) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-950">
+      <div className="text-center max-w-sm px-6">
+        <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mx-auto mb-6">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="1.5">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+        </div>
+        <h1 className="text-xl font-light text-white mb-3">Access Pending</h1>
+        <p className="text-gray-400 text-sm leading-relaxed">
+          Your account is awaiting approval. You will receive access once an administrator reviews your request.
+        </p>
+        <button
+          onClick={() => { setPending(false); setMode('login'); }}
+          className="mt-8 text-gray-500 text-sm hover:text-gray-300 transition-colors"
+        >
+          Back to sign in
+        </button>
+      </div>
+    </div>
+  );
+}
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-950">
