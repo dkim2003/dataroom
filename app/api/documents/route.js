@@ -25,12 +25,15 @@ async function listAllFiles(prefix) {
       const subFiles = await listAllFiles(`${prefix}/${item.name}`)
       files.push(...subFiles)
     } else {
-      // item.id exists — this is an actual file
-      files.push({
-        name: item.name,
-        path: `${prefix}/${item.name}`
-      })
-    }
+  // item.id exists — this is an actual file
+  // Filter out Supabase's auto-generated placeholder files
+  if (item.name !== '.emptyFolderPlaceholder') {
+    files.push({
+      name: item.name,
+      path: `${prefix}/${item.name}`
+    })
+  }
+}
   }
 
   return files
