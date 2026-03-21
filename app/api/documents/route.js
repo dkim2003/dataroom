@@ -1,7 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 
-// Server-side only — uses service role key to list all files in the bucket
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -9,8 +8,34 @@ const supabase = createClient(
 
 const ADMIN_EMAIL = 'contact@kimduhyun.com'
 
-// GET /api/documents
-// Returns list of documents the user is allowed to see based on their role
+// Recursively lists all files inside a folder in Supabase Storage
+async function listAllFiles(prefix) {
+  const { data, error } = await supabase.storage
+    .from('documents')
+    .list(prefix, { limit: 1000 })
+
+  if (error || !data) return []
+
+  const files = []
+
+  for (const item of data) {
+    if (item.id === null) {
+      // item.id is null when it's a folder, not a file
+      // So we go deeper into that folder recursively
+      const subFiles = await listAllFiles(`${prefix}/${item.name}`)
+      files.push(...subFiles)
+    } else {
+      // item.id exists — this is an actual file
+      files.push({
+        name: item.name,
+        path: `${prefix}/${item.name}`
+      })
+    }
+  }
+
+  return files
+}
+
 export async function GET(request) {
   try {
     // Step 1 — verify the user is logged in
@@ -26,7 +51,7 @@ export async function GET(request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Step 2 — get the user's role from the profiles table
+    // Step 2 — get the user's role
     const { data: profile } = await supabase
       .from('profiles')
       .select('role')
@@ -36,40 +61,27 @@ export async function GET(request) {
     const isAdmin = user.email === ADMIN_EMAIL
     const isPostNda = profile?.role === 'post_nda'
 
-    // Step 3 — list all files in the bucket
-    // We list both general/ and restricted/ folders
-    const { data: generalFiles, error: generalError } = await supabase.storage
-      .from('documents')
-      .list('general', { recursive: true })
+    // Step 3 — recursively list all files in general/ and restricted/
+    const generalFiles = await listAllFiles('general')
+    const restrictedFiles = await listAllFiles('restricted')
 
-    const { data: restrictedFiles, error: restrictedError } = await supabase.storage
-      .from('documents')
-      .list('restricted', { recursive: true })
-
-    if (generalError) {
-      return NextResponse.json({ error: generalError.message }, { status: 500 })
-    }
-
-    // Step 4 — build the response
-    // Pre-NDA users only get general files
-    // Post-NDA and admin get both general and restricted files
+    // Step 4 — build the response based on role
     const documents = []
 
-    if (generalFiles) {
-      generalFiles.forEach(file => {
-        documents.push({
-          name: file.name,
-          path: `general/${file.name}`,
-          restricted: false
-        })
+    generalFiles.forEach(file => {
+      documents.push({
+        name: file.name,
+        path: file.path,
+        restricted: false
       })
-    }
+    })
 
-    if ((isPostNda || isAdmin) && restrictedFiles) {
+    // Only include restricted files for post-NDA and admin
+    if (isPostNda || isAdmin) {
       restrictedFiles.forEach(file => {
         documents.push({
           name: file.name,
-          path: `restricted/${file.name}`,
+          path: file.path,
           restricted: true
         })
       })
