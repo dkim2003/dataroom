@@ -458,17 +458,18 @@ export default function Dashboard() {
                     <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={(e) => setUploadFile(e.target.files[0])} style={{ fontSize: '14px', color: '#888', fontFamily: 'Exo 2, sans-serif' }} />
                     <select value={uploadFolder} onChange={(e) => setUploadFolder(e.target.value)} style={{ padding: '9px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#fff', fontSize: '14px', fontFamily: 'Exo 2, sans-serif' }}>
                       <option value="">Select folder...</option>
+
                       <optgroup label="00 — Start Here"><option value="00_START_HERE/Investor Guide">Investor Guide</option></optgroup>
-                      <optgroup label="02 — Market Opportunity">
-                        <option value="02_Market_Opportunity/01 Industrial Research">Industrial Research</option>
-                        <option value="02_Market_Opportunity/02 Competitor Analysis">Competitor Analysis</option>
-                        <option value="02_Market_Opportunity/03 Customer Segments">Customer Segments</option>
-                      </optgroup>
                       <optgroup label="01 — Pitch and Overview">
                         <option value="01_Pitch_and_Overview/01 Pitch Deck">Pitch Deck</option>
                         <option value="01_Pitch_and_Overview/02 Executive Summary">Executive Summary</option>
                         <option value="01_Pitch_and_Overview/03 Company Overview">Company Overview</option>
                         </optgroup>
+                      <optgroup label="02 — Market Opportunity">
+                        <option value="02_Market_Opportunity/01 Industrial Research">Industrial Research</option>
+                        <option value="02_Market_Opportunity/02 Competitor Analysis">Competitor Analysis</option>
+                        <option value="02_Market_Opportunity/03 Customer Segments">Customer Segments</option>
+                      </optgroup>
                       <optgroup label="03 — Product & Technology">
                         <option value="03_Product_Technology/01 Product Overview">Product Overview</option>
                         <option value="03_Product_Technology/02 Engineering Architecture">Engineering Architecture</option>
