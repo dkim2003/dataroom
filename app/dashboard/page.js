@@ -258,17 +258,18 @@ export default function Dashboard() {
   const isPostNda = profile.role === 'post_nda';
 
   const folders = [
-    '00_START_HERE',
-    '02_Market_Opportunity',
-    '03_Product_Technology',
-    '04_Traction',
-    '05_Financials',
-    '06_Legal',
-    '07_Team',
-    '08_Fundraising',
-    '09_Investor_Updates',
-    '10_Appendix'
-  ];
+  '00_START_HERE',
+  '01_Pitch_and_Overview',
+  '02_Market_Opportunity',
+  '03_Product_Technology',
+  '04_Traction',
+  '05_Financials',
+  '06_Legal',
+  '07_Team',
+  '08_Fundraising',
+  '09_Investor_Updates',
+  '10_Appendix'
+];
 
   const filteredDocs = activeFolder
     ? documents.filter(doc => doc.path.split('/')[1] === activeFolder)
@@ -463,6 +464,11 @@ export default function Dashboard() {
                         <option value="02_Market_Opportunity/02 Competitor Analysis">Competitor Analysis</option>
                         <option value="02_Market_Opportunity/03 Customer Segments">Customer Segments</option>
                       </optgroup>
+                      <optgroup label="01 — Pitch and Overview">
+                        <option value="01_Pitch_and_Overview/01 Pitch Deck">Pitch Deck</option>
+                        <option value="01_Pitch_and_Overview/02 Executive Summary">Executive Summary</option>
+                        <option value="01_Pitch_and_Overview/03 Company Overview">Company Overview</option>
+                        </optgroup>
                       <optgroup label="03 — Product & Technology">
                         <option value="03_Product_Technology/01 Product Overview">Product Overview</option>
                         <option value="03_Product_Technology/02 Engineering Architecture">Engineering Architecture</option>
