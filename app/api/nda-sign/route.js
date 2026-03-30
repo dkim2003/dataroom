@@ -26,7 +26,7 @@ function makeJwt() {
     aud:   'account-d.docusign.com',
     iat:   now,
     exp:   now + 3600,
-    scope: 'signature'
+    scope: 'signature impersonation'
   }))
 
   const signingInput = `${header}.${payload}`
@@ -34,8 +34,13 @@ function makeJwt() {
   signer.update(signingInput)
   signer.end()
 
-  // Private key may be stored with literal \n — convert to real newlines
-  const privateKey = process.env.DOCUSIGN_PRIVATE_KEY.replace(/\\n/g, '\n')
+  const rawPem = process.env.DOCUSIGN_PRIVATE_KEY.replace(/\\n/g, '\n').trim()
+  console.log('DS key header:', rawPem.split('\n')[0])
+  console.log('DS key length:', rawPem.length, 'lines:', rawPem.split('\n').length)
+
+  // Let OpenSSL auto-detect the key format from the PEM header
+  const privateKey = crypto.createPrivateKey(rawPem)
+
   const sig = signer.sign(privateKey, 'base64')
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
 
@@ -52,8 +57,12 @@ async function getAccessToken() {
     })
   })
   const data = await res.json()
+  console.log('DS token response status:', res.status)
+  console.log('DS token response keys:', Object.keys(data))
+  if (data.error) console.log('DS token error:', data.error, data.error_description)
   if (!res.ok) throw new Error(data.error_description || data.error || 'DocuSign auth failed')
-  return data.access_token
+  if (!data.access_token) throw new Error('DocuSign returned no access_token: ' + JSON.stringify(data))
+  return data.access_token.trim()
 }
 
 // POST /api/nda-sign
@@ -78,11 +87,14 @@ export async function POST(request) {
     if (!isPreNda) return NextResponse.json({ error: 'NDA not required for this account' }, { status: 400 })
 
     const accessToken = await getAccessToken()
-    const accountId   = process.env.DOCUSIGN_ACCOUNT_ID
     const signerName  = profile?.full_name || user.email.split('@')[0]
 
+    const accountId = process.env.DOCUSIGN_ACCOUNT_ID
+    const baseUrl   = DS_BASE
+    console.log('DS accountId:', accountId)
+
     // Step 1 — create envelope from template
-    const envRes = await fetch(`${DS_BASE}/accounts/${accountId}/envelopes`, {
+    const envRes = await fetch(`${baseUrl}/accounts/${accountId}/envelopes`, {
       method: 'POST',
       headers: {
         Authorization:  `Bearer ${accessToken}`,
@@ -100,6 +112,7 @@ export async function POST(request) {
       })
     })
     const envelope = await envRes.json()
+    console.log('DS envelope response:', JSON.stringify(envelope))
     if (!envRes.ok) throw new Error(envelope.message || JSON.stringify(envelope))
 
     // Step 2 — create recipient view (embedded signing URL)
@@ -107,7 +120,7 @@ export async function POST(request) {
     const returnUrl  = `${origin}/nda`
 
     const viewRes = await fetch(
-      `${DS_BASE}/accounts/${accountId}/envelopes/${envelope.envelopeId}/views/recipient`,
+      `${baseUrl}/accounts/${accountId}/envelopes/${envelope.envelopeId}/views/recipient`,
       {
         method: 'POST',
         headers: {

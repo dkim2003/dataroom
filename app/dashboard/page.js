@@ -137,7 +137,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const [uploadMessage, setUploadMessage] = useState('');
                             const [showUpload, setShowUpload] = useState(false);
                             const [solMessages, setSolMessages] = useState([
-                              { role: 'assistant', content: "Hello. I'm Sol, your data room assistant. I can answer questions about Space Launch Technologies and the OLAC system based on the documents in this data room. How can I help?" }
+                              { role: 'assistant', content: "Hey! I'm Sol, your data room assistant. I can answer questions about Space Launch Technologies and the OLAC system based on the documents in this data room. How can I help?" }
                             ]);
                             const [solInput, setSolInput] = useState('');
                             const [solLoading, setSolLoading] = useState(false);
@@ -222,6 +222,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               const result = await response.json();
                               if (result.signedUrl) {
                                 window.open(result.signedUrl, '_blank');
+                              } else if (result.requiresNda) {
+                                window.location.href = '/nda';
                               } else {
                                 alert('Access denied or error generating link.');
                               }
@@ -438,7 +440,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
   // Sol memory is in React state — it resets automatically on sign out or page close
   async function handleSignOut() {
     setSolMessages([
-      { role: 'assistant', content: "Hello. I'm Sol, your data room assistant. I can answer questions about Space Launch Technologies and the OLAC system based on the documents in this data room. How can I help?" }
+      { role: 'assistant', content: "Hey! I'm Sol, your data room assistant. I can answer questions about Space Launch Technologies and the OLAC system based on the documents in this data room. How can I help?" }
     ]);
     await supabase.auth.signOut();
     router.push('/login');
@@ -826,11 +828,14 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               border: `1px solid ${isMoving ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)'}`,
                               borderRadius: '6px',
                               opacity: isMoving ? 0.6 : 1,
-                              cursor: canEdit && !isMoving ? 'grab' : 'default',
+                              cursor: isMoving ? 'default' : 'pointer',
                               transition: 'opacity 0.15s',
                             }}
                           >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+                            <div
+                              onClick={() => !isRenaming && openDocument(doc.path, doc.name)}
+                              style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}
+                            >
                               {doc.restricted && !isPostNda && !isAdmin ? (
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
@@ -852,6 +857,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                     if (e.key === 'Escape') setRenamingDocPath(null);
                                   }}
                                   onBlur={() => setRenamingDocPath(null)}
+                                  onClick={(e) => e.stopPropagation()}
                                   style={{ fontSize: '15px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }}
                                 />
                               ) : (
@@ -866,18 +872,20 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 <span style={{ fontSize: '13px', color: '#3b82f6', fontFamily: 'Exo 2, sans-serif' }}>Moving...</span>
                               ) : isRenaming ? null : (
                                 <>
-                                  {canEdit && (
+                                  {canEdit && !(doc.restricted && !isPostNda && !isAdmin) && (
                                     <button
-                                      onClick={() => { setRenamingDocPath(doc.path); setRenameValue(doc.name); }}
+                                      onClick={(e) => { e.stopPropagation(); setRenamingDocPath(doc.path); setRenameValue(doc.name); }}
                                       style={{ fontSize: '13px', color: '#555', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif' }}
                                     >
                                       Rename
                                     </button>
                                   )}
                                   {doc.restricted && !isPostNda && !isAdmin ? (
-                                    <span style={{ fontSize: '13px', color: '#444' }}>NDA required</span>
+                                    <button onClick={(e) => { e.stopPropagation(); openDocument(doc.path, doc.name); }} style={{ fontSize: '13px', color: '#555', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif' }}>
+                                      NDA required →
+                                    </button>
                                   ) : (
-                                    <button onClick={() => openDocument(doc.path, doc.name)} style={{ fontSize: '13px', color: '#3b82f6', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif' }}>
+                                    <button onClick={(e) => { e.stopPropagation(); openDocument(doc.path, doc.name); }} style={{ fontSize: '13px', color: '#3b82f6', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif' }}>
                                       Open →
                                     </button>
                                   )}
