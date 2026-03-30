@@ -24,8 +24,20 @@ export async function POST(request) {
     const token = authHeader.replace('Bearer ', '')
     const { data: { user }, error: authError } = await supabase.auth.getUser(token)
 
-    if (authError || !user || user.email !== ADMIN_EMAIL) {
+    if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const isAdmin = user.email === ADMIN_EMAIL
+    if (!isAdmin) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single()
+
+      const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
+      if (!isEmployee) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     // Step 2 — parse the uploaded file from the form
