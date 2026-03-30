@@ -105,108 +105,107 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             )
                           }
 
-export default function Dashboard() {
-  const router = useRouter();
-  useExoFont();
+                          export default function Dashboard() {
+                            const router = useRouter();
+                            useExoFont();
+                            const [user, setUser] = useState(null);
+                            const [profile, setProfile] = useState(null);
+                            const [loading, setLoading] = useState(true);
+                            const [activeTab, setActiveTab] = useState('documents');
+                            const [documents, setDocuments] = useState([]);
+                            const [docsLoading, setDocsLoading] = useState(true);
+                            const [activeFolder, setActiveFolder] = useState(null);
+                            const [solDrawerOpen, setSolDrawerOpen] = useState(false);
+                            const [uploadFile, setUploadFile] = useState(null);
+                            const [uploadFolder, setUploadFolder] = useState('');
+                            const [uploadRestricted, setUploadRestricted] = useState(false);
+                            const [uploadLoading, setUploadLoading] = useState(false);
+                            const [uploadMessage, setUploadMessage] = useState('');
+                            const [showUpload, setShowUpload] = useState(false);
+                            const [solMessages, setSolMessages] = useState([
+                              { role: 'assistant', content: "Hello. I'm Sol, your data room assistant. I can answer questions about Space Launch Technologies and the OLAC system based on the documents in this data room. How can I help?" }
+                            ]);
+                            const [solInput, setSolInput] = useState('');
+                            const [solLoading, setSolLoading] = useState(false);
 
-  const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('documents');
-  const [documents, setDocuments] = useState([]);
-  const [docsLoading, setDocsLoading] = useState(true);
-  const [activeFolder, setActiveFolder] = useState(null);
-  const [solDrawerOpen, setSolDrawerOpen] = useState(false);
-  const [uploadFile, setUploadFile] = useState(null);
-  const [uploadFolder, setUploadFolder] = useState('');
-  const [uploadRestricted, setUploadRestricted] = useState(false);
-  const [uploadLoading, setUploadLoading] = useState(false);
-  const [uploadMessage, setUploadMessage] = useState('');
-  const [showUpload, setShowUpload] = useState(false);
-  const [solMessages, setSolMessages] = useState([
-    { role: 'assistant', content: "Hello. I'm Sol, your data room assistant. I can answer questions about Space Launch Technologies and the OLAC system based on the documents in this data room. How can I help?" }
-  ]);
-  const [solInput, setSolInput] = useState('');
-  const [solLoading, setSolLoading] = useState(false);
+                            useEffect(() => {
+                              async function init() {
+                                const { data: { user } } = await supabase.auth.getUser();
+                                if (!user) { router.push('/login'); return; }
+                                const { data: profile } = await supabase
+                                .from('profiles').select('*').eq('id', user.id).single();
+                                if (!profile || profile.status === 'pending' || profile.status === 'rejected') {
+                                  await supabase.auth.signOut();
+                                  router.push('/login');
+                                  return;
+                                }
+                                setUser(user);
+                                setProfile(profile);
+                                setLoading(false);
+                                await loadDocuments();
+                              }
+                              init();
+                            }, []);
 
-  useEffect(() => {
-    async function init() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { router.push('/login'); return; }
-      const { data: profile } = await supabase
-        .from('profiles').select('*').eq('id', user.id).single();
-      if (!profile || profile.status === 'pending' || profile.status === 'rejected') {
-        await supabase.auth.signOut();
-        router.push('/login');
-        return;
-      }
-      setUser(user);
-      setProfile(profile);
-      setLoading(false);
-      await loadDocuments();
-    }
-    init();
-  }, []);
+                            async function loadDocuments() {
+                              const { data: { session } } = await supabase.auth.getSession();
+                              const response = await fetch('/api/documents', {
+                                headers: { authorization: `Bearer ${session.access_token}` }
+                              });
+                              const result = await response.json();
+                              if (result.documents) setDocuments(result.documents);
+                              setDocsLoading(false);
+                            }
 
-  async function loadDocuments() {
-    const { data: { session } } = await supabase.auth.getSession();
-    const response = await fetch('/api/documents', {
-      headers: { authorization: `Bearer ${session.access_token}` }
-    });
-    const result = await response.json();
-    if (result.documents) setDocuments(result.documents);
-    setDocsLoading(false);
-  }
+                            async function openDocument(path, fileName) {
+                              const { data: { session } } = await supabase.auth.getSession();
+                              const response = await fetch('/api/documents/signed-url', {
+                                method: 'POST',
+                                headers: {
+                                  authorization: `Bearer ${session.access_token}`,
+                                  'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({ path, fileName })
+                              });
 
-  async function openDocument(path, fileName) {
-    const { data: { session } } = await supabase.auth.getSession();
-    const response = await fetch('/api/documents/signed-url', {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${session.access_token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ path, fileName })
-    });
-    const result = await response.json();
-    if (result.signedUrl) {
-      window.open(result.signedUrl, '_blank');
-    } else {
-      alert('Access denied or error generating link.');
-    }
-  }
+                              const result = await response.json();
+                              if (result.signedUrl) {
+                                window.open(result.signedUrl, '_blank');
+                              } else {
+                                alert('Access denied or error generating link.');
+                              }
+                            }
 
-  async function handleUpload() {
-    if (!uploadFile || !uploadFolder) return;
-    setUploadLoading(true);
-    setUploadMessage('');
-    const { data: { session } } = await supabase.auth.getSession();
-    const formData = new FormData();
-    formData.append('file', uploadFile);
-    formData.append('folder', uploadFolder);
-    formData.append('isRestricted', uploadRestricted.toString());
-    const response = await fetch('/api/upload', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${session.access_token}` },
-      body: formData
-    });
-    const result = await response.json();
-    if (result.error) {
-      setUploadMessage('Error: ' + result.error);
-    } else {
-      setUploadMessage('File uploaded successfully.');
-      setUploadFile(null);
-      setUploadFolder('');
-      setUploadRestricted(false);
-      await loadDocuments();
-    }
-    setUploadLoading(false);
-  }
-
-  async function sendSolMessage() {
-    if (!solInput.trim() || solLoading) return;
-    const userMessage = solInput.trim();
-    const currentHistory = solMessages // capture before state update
+                            async function handleUpload() {
+                              if (!uploadFile || !uploadFolder) return;
+                              setUploadLoading(true);
+                              setUploadMessage('');
+                              const { data: { session } } = await supabase.auth.getSession();
+                              const formData = new FormData();
+                              formData.append('file', uploadFile);
+                              formData.append('folder', uploadFolder);
+                              formData.append('isRestricted', uploadRestricted.toString());
+                              const response = await fetch('/api/upload', {
+                                method: 'POST',
+                                headers: { authorization: `Bearer ${session.access_token}` },
+                                body: formData
+                              });
+                              const result = await response.json();
+                              if (result.error) {
+                                setUploadMessage('Error: ' + result.error);
+                              } else {
+                                setUploadMessage('File uploaded successfully.');
+                                setUploadFile(null);
+                                setUploadFolder('');
+                                setUploadRestricted(false);
+                                await loadDocuments();
+                              }
+                              setUploadLoading(false);
+                            }
+                            async function sendSolMessage() {
+                              if (!solInput.trim() || solLoading) return;
+                              const userMessage = solInput.trim();
+                              const currentHistory = solMessages; // capture before state update
     setSolInput('');
     setSolMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     setSolLoading(true);

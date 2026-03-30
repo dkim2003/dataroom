@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
 
@@ -10,7 +10,7 @@ const supabase = createClient(
 );
 
 export default function LoginPage() {
-  const [mode, setMode] = useState('login');
+  const [step, setStep] = useState('greeting'); // greeting | investor | employee | login
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -18,17 +18,30 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [pending, setPending] = useState(false);
   const [rejected, setRejected] = useState(false);
+  const [solText, setSolText] = useState('');
   const router = useRouter();
+
+  const fullGreeting = "Welcome to SpaceLaunch. I'm Sol, here to guide you through the data room.";
+
+  // Typewriter effect for Sol's greeting
+  useEffect(() => {
+    if (step !== 'greeting') return;
+    setSolText('');
+    let i = 0;
+    const interval = setInterval(() => {
+      i++;
+      setSolText(fullGreeting.slice(0, i));
+      if (i >= fullGreeting.length) clearInterval(interval);
+    }, 28);
+    return () => clearInterval(interval);
+  }, [step]);
 
   async function handleLogin(e) {
     e.preventDefault();
     setLoading(true);
     setError('');
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
     if (error) {
       setError(error.message);
@@ -48,7 +61,7 @@ export default function LoginPage() {
       setLoading(false);
       return;
     }
-    
+
     if (profile?.status === 'rejected') {
       await supabase.auth.signOut();
       setRejected(true);
@@ -64,11 +77,13 @@ export default function LoginPage() {
     setLoading(true);
     setError('');
 
+    const role = step === 'investor' ? 'pre_nda_investor' : 'pre_nda_employee';
+
     const { error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: { full_name: fullName }
+        data: { full_name: fullName, role }
       }
     });
 
@@ -82,115 +97,251 @@ export default function LoginPage() {
     setLoading(false);
   }
 
+  // --- Pending screen ---
+  if (pending) {
+    return (
+      <div style={styles.page}>
+        <div style={{ textAlign: 'center', maxWidth: '320px', padding: '0 24px' }}>
+          <div style={styles.iconCircle}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="1.5">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+          </div>
+          <h1 style={styles.heading}>Access Pending</h1>
+          <p style={styles.subtext}>Your account is awaiting approval. You will receive access once an administrator reviews your request.</p>
+          <button onClick={() => { setPending(false); setStep('greeting'); }} style={styles.backLink}>
+            Back to start
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Rejected screen ---
   if (rejected) {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-950">
-      <div className="text-center max-w-sm px-6">
-        <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mx-auto mb-6">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="1.5">
-            <circle cx="12" cy="12" r="10"/>
-            <line x1="15" y1="9" x2="9" y2="15"/>
-            <line x1="9" y1="9" x2="15" y2="15"/>
-          </svg>
+    return (
+      <div style={styles.page}>
+        <div style={{ textAlign: 'center', maxWidth: '320px', padding: '0 24px' }}>
+          <div style={styles.iconCircle}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="1.5">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="15" y1="9" x2="9" y2="15"/>
+              <line x1="9" y1="9" x2="15" y2="15"/>
+            </svg>
+          </div>
+          <h1 style={styles.heading}>Access Denied</h1>
+          <p style={styles.subtext}>Your access request was not approved. Contact the administrator if you believe this is an error.</p>
+          <button onClick={() => { setRejected(false); setStep('greeting'); }} style={styles.backLink}>
+            Back to start
+          </button>
         </div>
-        <h1 className="text-xl font-light text-white mb-3">Access Denied</h1>
-        <p className="text-gray-400 text-sm leading-relaxed">
-          Your access request was not approved. Contact the administrator if you believe this is an error.
-        </p>
-        <button
-          onClick={() => { setRejected(false); setMode('login'); }}
-          className="mt-8 text-gray-500 text-sm hover:text-gray-300 transition-colors"
-        >
-          Back to sign in
-        </button>
       </div>
-    </div>
-  );
-}
+    );
+  }
 
-if (pending) {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-950">
-      <div className="text-center max-w-sm px-6">
-        <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mx-auto mb-6">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="1.5">
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-          </svg>
+  // --- Greeting screen ---
+  if (step === 'greeting') {
+    return (
+      <div style={styles.page}>
+        <div style={{ textAlign: 'center', width: '360px', padding: '0 24px' }}>
+          {/* Sol indicator */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '28px' }}>
+            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6' }}/>
+            <span style={{ fontSize: '12px', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em' }}>SOL</span>
+          </div>
+
+          {/* Typewriter greeting */}
+          <p style={{ fontSize: '22px', fontWeight: '300', color: '#e0e0e0', lineHeight: '1.6', marginBottom: '48px', height: '130px', fontFamily: 'Exo 2, sans-serif' }}>
+            {solText}
+            <span style={{ opacity: solText.length < fullGreeting.length ? 1 : 0, borderRight: '1px solid #3b82f6', marginLeft: '1px' }}>&nbsp;</span>
+          </p>
+
+          {/* Three choice buttons */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <button onClick={() => setStep('investor')} style={styles.choiceBtn}>
+              I'm an investor
+            </button>
+            <button onClick={() => setStep('employee')} style={styles.choiceBtn}>
+              I'm an employee
+            </button>
+            <button onClick={() => setStep('login')} style={{ ...styles.choiceBtn, ...styles.choiceBtnMuted }}>
+              I already have an account
+            </button>
+          </div>
         </div>
-        <h1 className="text-xl font-light text-white mb-3">Access Pending</h1>
-        <p className="text-gray-400 text-sm leading-relaxed">
-          Your account is awaiting approval. You will receive access once an administrator reviews your request.
-        </p>
-        <button
-          onClick={() => { setPending(false); setMode('login'); }}
-          className="mt-8 text-gray-500 text-sm hover:text-gray-300 transition-colors"
-        >
-          Back to sign in
-        </button>
       </div>
-    </div>
-  );
-}
+    );
+  }
 
+  // --- Investor registration ---
+  if (step === 'investor') {
+    return (
+      <div style={styles.page}>
+        <div style={{ width: '100%', maxWidth: '320px', padding: '0 24px' }}>
+          <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px' }}>
+              <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6' }}/>
+              <span style={{ fontSize: '12px', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em' }}>SOL</span>
+            </div>
+            <h1 style={{ fontSize: '26px', fontWeight: '300', color: '#fff', marginBottom: '6px', fontFamily: 'Exo 2, sans-serif' }}>Request investor access</h1>
+            <p style={{ fontSize: '16px', color: '#555', fontFamily: 'Exo 2, sans-serif' }}>Your request will be reviewed by the administrator.</p>
+          </div>
+
+          <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <input type="text" placeholder="Full name" value={fullName} onChange={e => setFullName(e.target.value)} required style={styles.input}/>
+            <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required style={styles.input}/>
+            <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required style={styles.input}/>
+            {error && <p style={{ color: '#f87171', fontSize: '13px' }}>{error}</p>}
+            <button type="submit" disabled={loading} style={styles.submitBtn}>
+              {loading ? 'Please wait...' : 'Request access'}
+            </button>
+          </form>
+
+          <button onClick={() => { setStep('greeting'); setError(''); }} style={styles.backLink}>← Back</button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Employee registration ---
+  if (step === 'employee') {
+    return (
+      <div style={styles.page}>
+        <div style={{ width: '100%', maxWidth: '320px', padding: '0 24px' }}>
+          <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px' }}>
+              <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6' }}/>
+              <span style={{ fontSize: '12px', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em' }}>SOL</span>
+            </div>
+            <h1 style={{ fontSize: '26px', fontWeight: '300', color: '#fff', marginBottom: '6px', fontFamily: 'Exo 2, sans-serif' }}>Request employee access</h1>
+            <p style={{ fontSize: '16px', color: '#555', fontFamily: 'Exo 2, sans-serif' }}>Your request will be reviewed by the administrator.</p>
+          </div>
+
+          <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <input type="text" placeholder="Full name" value={fullName} onChange={e => setFullName(e.target.value)} required style={styles.input}/>
+            <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required style={styles.input}/>
+            <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required style={styles.input}/>
+            {error && <p style={{ color: '#f87171', fontSize: '13px' }}>{error}</p>}
+            <button type="submit" disabled={loading} style={styles.submitBtn}>
+              {loading ? 'Please wait...' : 'Request access'}
+            </button>
+          </form>
+
+          <button onClick={() => { setStep('greeting'); setError(''); }} style={styles.backLink}>← Back</button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Sign in (existing account) ---
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-950">
-      <div className="w-full max-w-sm px-6">
-        <div className="text-center mb-8">
-          <h1 className="text-2xl font-light text-white mb-1">
-            {mode === 'login' ? 'Sign in' : 'Request access'}
-          </h1>
-          <p className="text-gray-500 text-sm">Space Launch Technologies VDR</p>
+    <div style={styles.page}>
+      <div style={{ width: '100%', maxWidth: '320px', padding: '0 24px' }}>
+        <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px' }}>
+            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6' }}/>
+            <span style={{ fontSize: '12px', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em' }}>SOL</span>
+          </div>
+          <h1 style={{ fontSize: '26px', fontWeight: '300', color: '#fff', marginBottom: '6px', fontFamily: 'Exo 2, sans-serif' }}>Welcome back</h1>
+          <p style={{ fontSize: '16px', color: '#555', fontFamily: 'Exo 2, sans-serif' }}>Space Launch Technologies VDR</p>
         </div>
 
-        <form onSubmit={mode === 'login' ? handleLogin : handleRegister} className="space-y-4">
-          {mode === 'register' && (
-            <input
-              type="text"
-              placeholder="Full name"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              required
-              className="w-full px-4 py-3 bg-gray-900 border border-gray-800 rounded-lg text-white text-sm placeholder-gray-500 focus:outline-none focus:border-gray-600"
-            />
-          )}
-          <input
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            className="w-full px-4 py-3 bg-gray-900 border border-gray-800 rounded-lg text-white text-sm placeholder-gray-500 focus:outline-none focus:border-gray-600"
-          />
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            className="w-full px-4 py-3 bg-gray-900 border border-gray-800 rounded-lg text-white text-sm placeholder-gray-500 focus:outline-none focus:border-gray-600"
-          />
-
-          {error && <p className="text-red-400 text-sm">{error}</p>}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3 bg-white text-gray-950 text-sm font-medium rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-50"
-          >
-            {loading ? 'Please wait...' : mode === 'login' ? 'Sign in' : 'Request access'}
+        <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required style={styles.input}/>
+          <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required style={styles.input}/>
+          {error && <p style={{ color: '#f87171', fontSize: '13px' }}>{error}</p>}
+          <button type="submit" disabled={loading} style={styles.submitBtn}>
+            {loading ? 'Please wait...' : 'Sign in'}
           </button>
         </form>
 
-        <p className="text-center text-gray-500 text-sm mt-6">
-          {mode === 'login' ? "Don't have access? " : 'Already have an account? '}
-          <button
-            onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); }}
-            className="text-gray-300 hover:text-white transition-colors"
-          >
-            {mode === 'login' ? 'Request access' : 'Sign in'}
-          </button>
-        </p>
+        <button onClick={() => { setStep('greeting'); setError(''); }} style={styles.backLink}>← Back</button>
       </div>
     </div>
   );
 }
+
+const styles = {
+  page: {
+    minHeight: '100vh',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: '#080808',
+    fontFamily: 'Exo 2, sans-serif',
+  },
+  iconCircle: {
+    width: '48px',
+    height: '48px',
+    borderRadius: '50%',
+    background: 'rgba(255,255,255,0.05)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    margin: '0 auto 20px',
+  },
+  heading: {
+    fontSize: '20px',
+    fontWeight: '300',
+    color: '#fff',
+    marginBottom: '10px',
+    fontFamily: 'Exo 2, sans-serif',
+  },
+  subtext: {
+    fontSize: '13px',
+    color: '#666',
+    lineHeight: '1.6',
+    fontFamily: 'Exo 2, sans-serif',
+  },
+  backLink: {
+    display: 'block',
+    textAlign: 'center',
+    marginTop: '20px',
+    fontSize: '13px',
+    color: '#555',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    fontFamily: 'Exo 2, sans-serif',
+    width: '100%',
+  },
+  choiceBtn: {
+    width: '100%',
+    padding: '13px',
+    background: 'rgba(255,255,255,0.04)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: '8px',
+    color: '#ccc',
+    fontSize: '17px',
+    fontFamily: 'Exo 2, sans-serif',
+    cursor: 'pointer',
+  },
+  choiceBtnMuted: {
+    color: '#666',
+    borderColor: 'rgba(255,255,255,0.06)',
+    marginTop: '4px',
+  },
+  input: {
+    padding: '11px 14px',
+    background: 'rgba(255,255,255,0.05)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: '8px',
+    color: '#fff',
+    fontSize: '16px',
+    fontFamily: 'Exo 2, sans-serif',
+    outline: 'none',
+    width: '100%',
+  },
+  submitBtn: {
+    padding: '12px',
+    background: '#fff',
+    color: '#080808',
+    border: 'none',
+    borderRadius: '8px',
+    fontSize: '16px',
+    fontWeight: '600',
+    fontFamily: 'Exo 2, sans-serif',
+    cursor: 'pointer',
+    marginTop: '4px',
+  },
+};
