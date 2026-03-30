@@ -28,7 +28,7 @@ function isDocumentRelated(message) {
 }
 
 // Recursively list all files the user can access
-async function listAccessibleFiles(isPostNda, isAdmin) {
+async function listAccessibleFiles(hasRestrictedAccess, isAdmin) {
   async function listFolder(prefix) {
     const { data, error } = await supabase.storage
       .from('documents')
@@ -49,7 +49,7 @@ async function listAccessibleFiles(isPostNda, isAdmin) {
   }
 
   const generalFiles = await listFolder('general')
-  const restrictedFiles = (isPostNda || isAdmin) ? await listFolder('restricted') : []
+  const restrictedFiles = (hasRestrictedAccess || isAdmin) ? await listFolder('restricted') : []
 
   return [...generalFiles, ...restrictedFiles]
 }
@@ -90,8 +90,9 @@ export async function POST(request) {
       .eq('id', user.id)
       .single()
 
-    const isAdmin = user.email === ADMIN_EMAIL
-    const isPostNda = profile?.role === 'post_nda'
+      const isAdmin = user.email === ADMIN_EMAIL
+      const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
+      const hasRestrictedAccess = isAdmin || profile?.role === 'post_nda_investor' || profile?.role === 'post_nda_employee'
 
     // Step 3 — get the user's message
     const { message, history = [] } = await request.json()
@@ -105,7 +106,7 @@ export async function POST(request) {
 
     if (needsDocs) {
       // Fetch the list of files this user can access
-      const files = await listAccessibleFiles(isPostNda, isAdmin)
+      const files = await listAccessibleFiles(hasRestrictedAccess, isAdmin)
 
       if (files.length === 0) {
         // No files uploaded yet — tell Sol so it can inform the user
@@ -116,7 +117,7 @@ export async function POST(request) {
       } else {
         // Download each file and add to the message as a document block
         // We limit to 5 files to keep response times reasonable
-        const filesToRead = files.slice(0, 5)
+        const filesToRead = files.slice(0, 10)
         const documentBlocks = []
 
         for (const file of filesToRead) {
@@ -176,6 +177,7 @@ if (documentBlocks.length === 0) {
     const systemPrompt = `You are Sol, the AI data room assistant for Space Launch Technologies. You help investors, team members, and partners navigate the data room, understand the company, and get accurate answers quickly.
 
     The user you are speaking with is: ${profile?.full_name || 'Unknown'} (${user.email})
+    User type: ${isAdmin ? 'Admin' : isEmployee ? 'Employee' : 'Investor'}
 
     Respond the way a sharp, well-informed colleague would — not a customer service bot. Match the length of your response to what the question actually requires. A one-line question gets a one-line answer if that's all it needs. A detailed technical question gets a thorough response. Never pad responses with filler, enthusiasm, or unnecessary context.
 
@@ -193,7 +195,7 @@ if (documentBlocks.length === 0) {
 
     About Space Launch Technologies: The company is developing the Orbital Launch Air Cannon (OLAC), a ground-based compressed air system that propels rockets to approximately 3km altitude and Mach 2+ before engines ignite. This increases payload capacity by over 50% and cuts launch costs by 41%. The founder is Carl F. Mazur PhD. The current raise is $1.16M at a $4.76M valuation, with a pre-seed of $400K already targeted. The business model is a $250K per quarter technology licensing fee plus a 20% profit share on launch cost savings. Key partners include UBC, NRC Canada, IBM, Fasken Law, KPMG, and Perpetual Motion Patents. A provisional U.S. patent is secured.
 
-    ${isPostNda || isAdmin
+    ${hasRestrictedAccess || isAdmin
         ? 'This user has signed the NDA and has full access to all documents including patent and white paper details.'
         : 'This user has Pre-NDA access. You can discuss the technology, business model, team, market, and financials freely. Do not reveal specific patent claims or white paper technical details.'}`
 
