@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Rocket body -->
+  <ellipse cx="50" cy="45" rx="14" ry="28" fill="#3b82f6"/>
+  <!-- Rocket nose -->
+  <ellipse cx="50" cy="18" rx="14" ry="10" fill="#60a5fa"/>
+  <!-- Left fin -->
+  <polygon points="36,65 26,80 36,75" fill="#2563eb"/>
+  <!-- Right fin -->
+  <polygon points="64,65 74,80 64,75" fill="#2563eb"/>
+  <!-- Flame -->
+  <ellipse cx="50" cy="80" rx="8" ry="12" fill="#f97316" opacity="0.9"/>
+  <ellipse cx="50" cy="84" rx="5" ry="8" fill="#fbbf24" opacity="0.9"/>
+  <!-- Window -->
+  <circle cx="50" cy="42" r="6" fill="#0f172a"/>
+  <circle cx="50" cy="42" r="4" fill="#38bdf8" opacity="0.7"/>
+</svg>

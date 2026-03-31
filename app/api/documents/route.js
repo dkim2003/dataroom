@@ -8,23 +8,29 @@ const supabase = createClient(
 
 const ADMIN_EMAIL = 'contact@kimduhyun.com'
 
-async function listAllFiles(prefix) {
+// Returns { files, folderPaths } — folderPaths includes ALL subdirectories, even empty ones
+async function listAll(prefix) {
   const { data, error } = await supabase.storage
     .from('documents')
     .list(prefix, { limit: 1000 })
 
-  if (error || !data) return []
+  if (error || !data) return { files: [], folderPaths: [] }
 
   const files = []
+  const folderPaths = []
+
   for (const item of data) {
     if (item.id === null) {
-      const subFiles = await listAllFiles(`${prefix}/${item.name}`)
-      files.push(...subFiles)
-    } else if (item.name !== '.emptyFolderPlaceholder') {
-      files.push({ name: item.name, path: `${prefix}/${item.name}` })
+      const subPath = `${prefix}/${item.name}`
+      folderPaths.push(subPath)
+      const sub = await listAll(subPath)
+      files.push(...sub.files)
+      folderPaths.push(...sub.folderPaths)
+    } else if (item.name !== '.emptyFolderPlaceholder' && item.name !== '.keep') {
+      files.push({ name: item.name, path: `${prefix}/${item.name}`, mimeType: item.metadata?.mimetype || '' })
     }
   }
-  return files
+  return { files, folderPaths }
 }
 
 export async function GET(request) {
@@ -47,27 +53,23 @@ export async function GET(request) {
       profile?.role === 'post_nda_investor' ||
       profile?.role === 'post_nda_employee'
 
-    const generalFiles = await listAllFiles('general')
-    const restrictedFiles = await listAllFiles('restricted')
+    const general = await listAll('general')
+    const restricted = await listAll('restricted')
 
     const documents = []
 
-    generalFiles.forEach(file => {
-      documents.push({ name: file.name, path: file.path, restricted: false })
+    general.files.forEach(file => {
+      documents.push({ name: file.name, path: file.path, mimeType: file.mimeType, restricted: false })
     })
 
-    if (hasRestrictedAccess) {
-      restrictedFiles.forEach(file => {
-        documents.push({ name: file.name, path: file.path, restricted: true })
-      })
-    } else {
-      // Pre-NDA users see restricted files listed but cannot open them
-      restrictedFiles.forEach(file => {
-        documents.push({ name: file.name, path: file.path, restricted: true })
-      })
-    }
+    restricted.files.forEach(file => {
+      documents.push({ name: file.name, path: file.path, mimeType: file.mimeType, restricted: true })
+    })
 
-    return NextResponse.json({ documents })
+    // All known folder paths (for sidebar, including empty folders)
+    const allFolderPaths = [...general.folderPaths, ...restricted.folderPaths]
+
+    return NextResponse.json({ documents, folderPaths: allFolderPaths })
 
   } catch (err) {
     return NextResponse.json({ error: err.message }, { status: 500 })

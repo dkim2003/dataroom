@@ -76,6 +76,21 @@ export default function AdminPage() {
     else { setMessage('Role updated successfully.'); await fetchProfiles() }
   }
 
+  async function createSubfolders() {
+    setMessage('Creating subfolders...')
+    const { data: { session } } = await supabase.auth.getSession()
+    const res = await fetch('/api/setup/subfolders', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${session.access_token}` }
+    })
+    const result = await res.json()
+    if (result.error) setMessage('Error: ' + result.error)
+    else {
+      const created = result.results.filter(r => r.ok).length
+      setMessage(`Done — ${created}/${result.results.length} subfolders ready.`)
+    }
+  }
+
   const pending = profiles.filter(p => p.status === 'pending')
   const approved = profiles.filter(p => p.status === 'approved')
   const rejected = profiles.filter(p => p.status === 'rejected')
@@ -131,12 +146,20 @@ export default function AdminPage() {
           <h1 style={{ fontSize: '22px', fontWeight: '700', letterSpacing: '0.05em', marginBottom: '4px' }}>USER MANAGEMENT</h1>
           <p style={{ fontSize: '13px', color: '#555' }}>Space Launch Technologies — Admin Panel</p>
         </div>
-        <button
-          onClick={() => router.push('/dashboard')}
-          style={{ fontSize: '13px', color: '#555', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif' }}
-        >
-          ← Back to Dashboard
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <button
+            onClick={createSubfolders}
+            style={{ fontSize: '13px', color: '#3b82f6', background: 'none', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '6px', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif', padding: '7px 14px' }}
+          >
+            Create Standard Subfolders
+          </button>
+          <button
+            onClick={() => router.push('/dashboard')}
+            style={{ fontSize: '13px', color: '#555', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif' }}
+          >
+            ← Back to Dashboard
+          </button>
+        </div>
       </div>
 
       {/* Status message */}

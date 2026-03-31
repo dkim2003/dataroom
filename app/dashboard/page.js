@@ -48,6 +48,35 @@ function cleanMarkdown(text) {
     .trim()
 }
 
+function FileTypeIcon({ name, size = 28 }) {
+  const ext = (name || '').split('.').pop().toLowerCase();
+  if (ext === 'pdf') return (
+    <div style={{ width: size, height: size, borderRadius: '5px', background: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      <span style={{ fontSize: size * 0.32, fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '-0.02em' }}>PDF</span>
+    </div>
+  );
+  if (ext === 'doc' || ext === 'docx') return (
+    <div style={{ width: size, height: size, borderRadius: '5px', background: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      <span style={{ fontSize: size * 0.4, fontWeight: '700', color: '#fff', fontFamily: 'serif' }}>W</span>
+    </div>
+  );
+  if (ext === 'xls' || ext === 'xlsx') return (
+    <div style={{ width: size, height: size, borderRadius: '5px', background: '#16a34a', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      <span style={{ fontSize: size * 0.4, fontWeight: '700', color: '#fff', fontFamily: 'serif' }}>X</span>
+    </div>
+  );
+  if (ext === 'ppt' || ext === 'pptx') return (
+    <div style={{ width: size, height: size, borderRadius: '5px', background: '#ea580c', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      <span style={{ fontSize: size * 0.4, fontWeight: '700', color: '#fff', fontFamily: 'serif' }}>P</span>
+    </div>
+  );
+  return (
+    <div style={{ width: size, height: size, borderRadius: '5px', background: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      <svg width={size * 0.55} height={size * 0.55} viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+    </div>
+  );
+}
+
 // Sol chat panel — used in both desktop right panel and center when Sol tab is active
 function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessage }) {
   const bottomRef = useRef(null)
@@ -146,6 +175,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const [dropStatusMessage, setDropStatusMessage] = useState('');
                             const dropZoneInputRef = useRef(null);
                             const [draggingDoc, setDraggingDoc] = useState(null);
+                            const [draggingFolder, setDraggingFolder] = useState(null);
                             const [dragOverFolder, setDragOverFolder] = useState(null);
                             const [movingDocPath, setMovingDocPath] = useState(null);
                             const [renamingDocPath, setRenamingDocPath] = useState(null);
@@ -157,6 +187,25 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const [showTutorial, setShowTutorial] = useState(false);
                             const [tutorialStep, setTutorialStep] = useState(0);
                             const [spotlightRect, setSpotlightRect] = useState(null);
+                            const [activityLogs, setActivityLogs] = useState([]);
+                            const [activityLoading, setActivityLoading] = useState(false);
+                            const [expandedActivityRows, setExpandedActivityRows] = useState(new Set());
+                            const [activityView, setActivityView] = useState('recency');
+                            const [expandedActivityGroups, setExpandedActivityGroups] = useState(new Set());
+                            const [docView, setDocView] = useState('list');
+                            const [userRecents, setUserRecents] = useState({});
+                            const [previewUrls, setPreviewUrls] = useState({});
+                            const [pdfThumbnails, setPdfThumbnails] = useState({});
+                            const [openMenuPath, setOpenMenuPath] = useState(null);
+                            const [openFolderMenu, setOpenFolderMenu] = useState(null);
+                            const [renamingFolderPath, setRenamingFolderPath] = useState(null);
+                            const [renameFolderValue, setRenameFolderValue] = useState('');
+                            const [trashItems, setTrashItems] = useState([]);
+                            const [trashLoading, setTrashLoading] = useState(false);
+                            const [creatingFolderIn, setCreatingFolderIn] = useState(null);
+                            const [expandedFolders, setExpandedFolders] = useState(new Set());
+                            const [folderPaths, setFolderPaths] = useState([]);
+                            const [newFolderName, setNewFolderName] = useState('');
 
                             useEffect(() => {
                               async function init() {
@@ -174,6 +223,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 setLoading(false);
                                 await loadDocuments();
                                 await loadDiligence();
+                                await loadUserRecents();
                                 if (!profile.has_seen_tutorial) setShowTutorial(true);
                               }
                               init();
@@ -193,6 +243,70 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               return () => clearTimeout(timer);
                             }, [showTutorial, tutorialStep, profile]);
 
+                            useEffect(() => {
+                              if (!openMenuPath) return;
+                              const close = () => setOpenMenuPath(null);
+                              document.addEventListener('click', close);
+                              return () => document.removeEventListener('click', close);
+                            }, [openMenuPath]);
+
+                            async function renderPdfThumbnail(url, path) {
+                              const tryRender = async (retries = 6) => {
+                                const pdfjs = window.pdfjsLib;
+                                if (!pdfjs) {
+                                  if (retries > 0) {
+                                    await new Promise(r => setTimeout(r, 600));
+                                    return tryRender(retries - 1);
+                                  }
+                                  return;
+                                }
+                                try {
+                                  pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                                  const pdf = await pdfjs.getDocument({ url, withCredentials: false }).promise;
+                                  const page = await pdf.getPage(1);
+                                  const viewport = page.getViewport({ scale: 2 });
+                                  const canvas = document.createElement('canvas');
+                                  canvas.width = viewport.width;
+                                  canvas.height = viewport.height;
+                                  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                                  const thumb = canvas.toDataURL('image/jpeg', 0.85);
+                                  setPdfThumbnails(prev => ({ ...prev, [path]: thumb }));
+                                } catch (e) { /* fail silently — card will show placeholder */ }
+                              };
+                              tryRender();
+                            }
+
+                            useEffect(() => {
+                              if (docView === 'grid' && documents.length > 0) {
+                                supabase.auth.getSession().then(({ data: { session } }) => {
+                                  fetch('/api/documents/preview-urls', {
+                                    method: 'POST',
+                                    headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ docs: documents.map(d => ({ path: d.path })) })
+                                  }).then(r => r.json()).then(result => {
+                                    if (result.urls) {
+                                      setPreviewUrls(result.urls);
+                                      Object.entries(result.urls).forEach(([path, url]) => {
+                                        if (url) {
+                                          const doc = documents.find(d => d.path === path);
+                                          if (doc?.mimeType === 'application/pdf' || doc?.name.toLowerCase().endsWith('.pdf')) {
+                                            renderPdfThumbnail(url, path);
+                                          }
+                                        }
+                                      });
+                                    }
+                                  });
+                                });
+                              }
+                            }, [docView, documents]);
+
+                            useEffect(() => {
+                              if (!openFolderMenu) return;
+                              function handleClickOutside() { setOpenFolderMenu(null); }
+                              document.addEventListener('click', handleClickOutside);
+                              return () => document.removeEventListener('click', handleClickOutside);
+                            }, [openFolderMenu]);
+
                             async function loadDocuments() {
                               const { data: { session } } = await supabase.auth.getSession();
                               const response = await fetch('/api/documents', {
@@ -200,12 +314,103 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               });
                               const result = await response.json();
                               if (result.documents) setDocuments(result.documents);
+                              if (result.folderPaths) setFolderPaths(result.folderPaths);
                               setDocsLoading(false);
                             }
 
                             async function loadDiligence() {
                               const { data } = await supabase.from('due_diligence').select('*').order('position');
                               if (data) setDiligenceItems(data);
+                            }
+
+                            async function loadTrash() {
+                              setTrashLoading(true);
+                              const { data: { session } } = await supabase.auth.getSession();
+                              const res = await fetch('/api/trash', { headers: { authorization: `Bearer ${session.access_token}` } });
+                              const result = await res.json();
+                              if (result.items) setTrashItems(result.items);
+                              setTrashLoading(false);
+                            }
+
+                            async function moveToTrash(path, fileName) {
+                              const { data: { session } } = await supabase.auth.getSession();
+                              await fetch('/api/trash', {
+                                method: 'POST',
+                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ path, fileName })
+                              });
+                              await loadDocuments();
+                            }
+
+                            async function restoreFromTrash(trashId) {
+                              const { data: { session } } = await supabase.auth.getSession();
+                              await fetch('/api/trash/restore', {
+                                method: 'POST',
+                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ trashId })
+                              });
+                              await loadTrash();
+                              await loadDocuments();
+                            }
+
+                            async function deleteFromTrash(trashId) {
+                              const { data: { session } } = await supabase.auth.getSession();
+                              await fetch('/api/trash/delete', {
+                                method: 'POST',
+                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ trashId })
+                              });
+                              await loadTrash();
+                            }
+
+                            async function downloadDocument(path, fileName) {
+                              const { data: { session } } = await supabase.auth.getSession();
+                              const res = await fetch('/api/documents/download', {
+                                method: 'POST',
+                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ path, fileName })
+                              });
+                              const result = await res.json();
+                              if (result.signedUrl) {
+                                const a = document.createElement('a');
+                                a.href = result.signedUrl;
+                                a.download = fileName;
+                                a.click();
+                              } else if (result.requiresNda) {
+                                window.location.href = '/nda';
+                              }
+                            }
+
+                            async function createFolder(parentFolderPath, folderName, isRestricted) {
+                              const { data: { session } } = await supabase.auth.getSession();
+                              await fetch('/api/folders', {
+                                method: 'POST',
+                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ folderPath: `${parentFolderPath}/${folderName}`, isRestricted })
+                              });
+                              setCreatingFolderIn(null);
+                              setNewFolderName('');
+                              await loadDocuments();
+                            }
+
+                            async function loadUserRecents() {
+                              const { data: { session } } = await supabase.auth.getSession();
+                              const response = await fetch('/api/activity/user-recents', {
+                                headers: { authorization: `Bearer ${session.access_token}` }
+                              });
+                              const result = await response.json();
+                              if (result.recents) setUserRecents(result.recents);
+                            }
+
+                            async function loadActivity() {
+                              setActivityLoading(true);
+                              const { data: { session } } = await supabase.auth.getSession();
+                              const response = await fetch('/api/activity', {
+                                headers: { authorization: `Bearer ${session.access_token}` }
+                              });
+                              const result = await response.json();
+                              if (result.logs) setActivityLogs(result.logs);
+                              setActivityLoading(false);
                             }
 
                             async function openDocument(path, fileName) {
@@ -222,6 +427,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               const result = await response.json();
                               if (result.signedUrl) {
                                 window.open(result.signedUrl, '_blank');
+                                setUserRecents(prev => ({ ...prev, [fileName]: new Date().toISOString() }));
                               } else if (result.requiresNda) {
                                 window.location.href = '/nda';
                               } else {
@@ -384,6 +590,27 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               if (!result.error) await loadDocuments();
                             }
 
+                            async function handleMoveFolder({ topFolder, sub }, targetFolder) {
+                              if (targetFolder === topFolder) return;
+                              const folderDocs = documents.filter(doc => {
+                                const p = doc.path.split('/');
+                                return p[1] === topFolder && p[2] === sub;
+                              });
+                              if (folderDocs.length === 0) return;
+                              const { data: { session } } = await supabase.auth.getSession();
+                              for (const doc of folderDocs) {
+                                const p = doc.path.split('/');
+                                p[1] = targetFolder;
+                                const newPath = p.join('/');
+                                await fetch('/api/documents/move', {
+                                  method: 'POST',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ oldPath: doc.path, newPath })
+                                });
+                              }
+                              await loadDocuments();
+                            }
+
                             async function handleRenameDoc(doc, newName) {
                               const trimmed = newName.trim();
                               setRenamingDocPath(null);
@@ -401,6 +628,74 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               const result = await response.json();
                               setMovingDocPath(null);
                               if (!result.error) await loadDocuments();
+                            }
+
+                            async function downloadFolder(topFolder, sub) {
+                              const folderDocs = documents.filter(doc => {
+                                const p = doc.path.split('/');
+                                return p[1] === topFolder && p[2] === sub;
+                              });
+                              if (folderDocs.length === 0) return;
+                              const JSZip = window.JSZip;
+                              if (!JSZip) { alert('Download not ready, please try again.'); return; }
+                              const zip = new JSZip();
+                              const { data: { session } } = await supabase.auth.getSession();
+                              for (const doc of folderDocs) {
+                                const res = await fetch('/api/documents/download', {
+                                  method: 'POST',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ path: doc.path, fileName: doc.name })
+                                });
+                                const result = await res.json();
+                                if (result.signedUrl) {
+                                  const fileRes = await fetch(result.signedUrl);
+                                  const blob = await fileRes.blob();
+                                  zip.file(doc.name, blob);
+                                }
+                              }
+                              const content = await zip.generateAsync({ type: 'blob' });
+                              const a = document.createElement('a');
+                              a.href = URL.createObjectURL(content);
+                              a.download = `${sub.replace(/^\d+\s+/, '')}.zip`;
+                              a.click();
+                            }
+
+                            async function moveFolderToTrash(topFolder, sub) {
+                              const folderDocs = documents.filter(doc => {
+                                const p = doc.path.split('/');
+                                return p[1] === topFolder && p[2] === sub;
+                              });
+                              const { data: { session } } = await supabase.auth.getSession();
+                              for (const doc of folderDocs) {
+                                await fetch('/api/trash', {
+                                  method: 'POST',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ path: doc.path, fileName: doc.name })
+                                });
+                              }
+                              await loadDocuments();
+                            }
+
+                            async function renameFolder(topFolder, oldSub, newSub) {
+                              const trimmed = newSub.trim();
+                              setRenamingFolderPath(null);
+                              if (!trimmed || trimmed === oldSub) return;
+                              const folderDocs = documents.filter(doc => {
+                                const p = doc.path.split('/');
+                                return p[1] === topFolder && p[2] === oldSub;
+                              });
+                              const { data: { session } } = await supabase.auth.getSession();
+                              for (const doc of folderDocs) {
+                                const p = doc.path.split('/');
+                                p[2] = trimmed;
+                                const newPath = p.join('/');
+                                await fetch('/api/documents/move', {
+                                  method: 'POST',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ oldPath: doc.path, newPath })
+                                });
+                              }
+                              await loadDocuments();
                             }
 
                             async function sendSolMessage() {
@@ -472,8 +767,33 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
   '10_Appendix'
 ];
 
+  // Build subfolder map from folderPaths (includes empty folders)
+  // path format: general/01_Pitch_and_Overview/Executive Summary
+  const subfolderMap = {};
+  folderPaths.forEach(fp => {
+    const parts = fp.split('/');
+    if (parts.length === 3) {
+      const top = parts[1];
+      const sub = parts[2];
+      if (!subfolderMap[top]) subfolderMap[top] = new Set();
+      subfolderMap[top].add(sub);
+    }
+  });
+
   const filteredDocs = activeFolder
-    ? documents.filter(doc => doc.path.split('/')[1] === activeFolder)
+    ? (() => {
+        if (activeFolder.includes('/')) {
+          const [top, sub] = activeFolder.split('/');
+          return documents.filter(doc => {
+            const p = doc.path.split('/');
+            return p[1] === top && p[2] === sub;
+          });
+        }
+        return documents.filter(doc => {
+          const p = doc.path.split('/');
+          return p[1] === activeFolder && p.length === 3;
+        });
+      })()
     : documents;
 
   const groupedDocs = filteredDocs.reduce((groups, doc) => {
@@ -550,7 +870,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
           ].map(item => (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => { setActiveTab(item.id); if (item.id === 'activity') loadActivity(); }}
               style={{ padding: '12px 16px', background: 'none', border: 'none', borderBottom: activeTab === item.id ? '2px solid #3b82f6' : '2px solid transparent', color: activeTab === item.id ? '#fff' : '#777', fontSize: '14px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer', whiteSpace: 'nowrap' }}
             >
               {item.label}
@@ -579,7 +899,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
           ].map(item => (
             <button
               key={item.id}
-              onClick={() => { setActiveTab(item.id); if (item.id === 'documents') setActiveFolder(null); }}
+              onClick={() => { setActiveTab(item.id); if (item.id === 'documents') { setActiveFolder(null); } if (item.id === 'activity') loadActivity(); }}
               data-tutorial={item.id === 'diligence' ? 'diligence-tab' : item.id === 'pitchdeck' ? 'pitchdeck-tab' : undefined}
               style={{
                 width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
@@ -600,31 +920,98 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
             <div style={{ padding: '0 16px', marginBottom: '8px' }}>
               <p style={{ fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em' }}>FOLDERS</p>
             </div>
-            {folders.map(folder => (
-              <button
-                key={folder}
-                onClick={() => { setActiveFolder(folder); setActiveTab('documents'); }}
-                onDragOver={(e) => { if (draggingDoc) { e.preventDefault(); setDragOverFolder(folder); } }}
-                onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); }}
-                onDrop={(e) => { e.preventDefault(); setDragOverFolder(null); if (draggingDoc) handleMoveDoc(draggingDoc, folder); }}
-                style={{
-                  width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
-                  padding: '9px 16px',
-                  background: dragOverFolder === folder ? 'rgba(59,130,246,0.12)' : activeFolder === folder && activeTab === 'documents' ? 'rgba(255,255,255,0.05)' : 'none',
-                  border: 'none',
-                  borderLeft: dragOverFolder === folder ? '2px solid #3b82f6' : activeFolder === folder && activeTab === 'documents' ? '2px solid #3b82f6' : '2px solid transparent',
-                  color: dragOverFolder === folder ? '#3b82f6' : activeFolder === folder && activeTab === 'documents' ? '#fff' : '#888',
-                  cursor: 'pointer', fontSize: '14px', fontFamily: 'Exo 2, sans-serif', textAlign: 'left',
-                  fontWeight: activeFolder === folder && activeTab === 'documents' ? '600' : '400',
-                  transition: 'background 0.1s, color 0.1s',
-                }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-                </svg>
-                {folder.replace(/_/g, ' ')}
-              </button>
-            ))}
+            {folders.map(folder => {
+              const isActive = activeFolder === folder && activeTab === 'documents';
+              const isExpanded = expandedFolders.has(folder);
+              const subs = subfolderMap[folder] ? [...subfolderMap[folder]].sort() : [];
+              return (
+                <div key={folder}>
+                  <div
+                    style={{
+                      display: 'flex', alignItems: 'center',
+                      background: dragOverFolder === folder ? 'rgba(59,130,246,0.12)' : isActive ? 'rgba(255,255,255,0.05)' : 'none',
+                      borderLeft: dragOverFolder === folder ? '2px solid #3b82f6' : isActive ? '2px solid #3b82f6' : '2px solid transparent',
+                      transition: 'background 0.1s',
+                    }}
+                    onDragOver={(e) => { if (draggingDoc || draggingFolder) { e.preventDefault(); setDragOverFolder(folder); } }}
+                    onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); }}
+                    onDrop={(e) => { e.preventDefault(); setDragOverFolder(null); if (draggingDoc) handleMoveDoc(draggingDoc, folder); if (draggingFolder) handleMoveFolder(draggingFolder, folder); }}
+                  >
+                    <button
+                      onClick={() => { setActiveFolder(folder); setActiveTab('documents'); }}
+                      style={{
+                        flex: 1, display: 'flex', alignItems: 'center', gap: '10px',
+                        padding: '9px 8px 9px 14px',
+                        background: 'none', border: 'none',
+                        color: dragOverFolder === folder ? '#3b82f6' : isActive ? '#fff' : '#888',
+                        cursor: 'pointer', fontSize: '14px', fontFamily: 'Exo 2, sans-serif', textAlign: 'left',
+                        fontWeight: isActive ? '600' : '400',
+                        transition: 'color 0.1s',
+                      }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                      </svg>
+                      {folder.replace(/_/g, ' ').replace(/^\d+\s+/, '')}
+                    </button>
+                    {subs.length > 0 && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setExpandedFolders(prev => { const n = new Set(prev); n.has(folder) ? n.delete(folder) : n.add(folder); return n; }); }}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: isActive ? '#aaa' : '#555', padding: '9px 12px 9px 4px', lineHeight: 1, fontSize: '18px', transition: 'transform 0.2s, color 0.1s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-flex', alignItems: 'center' }}
+                        title="Toggle subfolders"
+                      >›</button>
+                    )}
+                  </div>
+                  {isExpanded && subs.map(sub => {
+                    const subPath = `${folder}/${sub}`;
+                    const subActive = activeFolder === subPath && activeTab === 'documents';
+                    return (
+                      <button
+                        key={sub}
+                        onClick={() => { setActiveFolder(subPath); setActiveTab('documents'); }}
+                        style={{
+                          width: '100%', display: 'flex', alignItems: 'center', gap: '8px',
+                          padding: '7px 16px 7px 36px',
+                          background: subActive ? 'rgba(255,255,255,0.04)' : 'none',
+                          border: 'none',
+                          borderLeft: subActive ? '2px solid #3b82f6' : '2px solid transparent',
+                          color: subActive ? '#ddd' : '#666',
+                          cursor: 'pointer', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', textAlign: 'left',
+                          transition: 'background 0.1s, color 0.1s',
+                        }}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                        </svg>
+                        {sub.replace(/^\d+\s+/, '')}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
+            {(isEmployee || isAdmin) && (
+              <>
+                <div style={{ margin: '10px 16px 6px', borderTop: '1px solid rgba(255,255,255,0.05)' }} />
+                <button
+                  onClick={() => { setActiveFolder('__trash__'); setActiveTab('documents'); loadTrash(); }}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
+                    padding: '9px 16px',
+                    background: activeFolder === '__trash__' ? 'rgba(255,255,255,0.05)' : 'none',
+                    border: 'none',
+                    borderLeft: activeFolder === '__trash__' ? '2px solid #ef4444' : '2px solid transparent',
+                    color: activeFolder === '__trash__' ? '#ef4444' : '#666',
+                    cursor: 'pointer', fontSize: '14px', fontFamily: 'Exo 2, sans-serif', textAlign: 'left',
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                  </svg>
+                  Recently Deleted
+                </button>
+              </>
+            )}
           </div>
 
           {/* Admin */}
@@ -646,17 +1033,64 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
         <div style={{ overflowY: activeTab === 'sol' ? 'hidden' : 'auto', padding: activeTab === 'sol' ? '0' : '36px', position: 'relative', display: 'flex', flexDirection: 'column' }}>
 
           {/* Documents tab */}
-          {activeTab === 'documents' && (
+          {activeTab === 'documents' && activeFolder === '__trash__' && (
             <div>
-              <div data-tutorial="doc-library" style={{ marginBottom: '28px' }}>
-                <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', marginBottom: '6px' }}>
-                  {activeFolder ? activeFolder.replace(/_/g, ' ') : 'DOCUMENT LIBRARY'}
-                </h1>
-                <p style={{ fontSize: '14px', color: '#777' }}>
-                  {activeFolder
-                    ? `Showing files in ${activeFolder.replace(/_/g, ' ')}`
-                    : (isPostNda || isAdmin ? 'Full access — all documents unlocked' : 'Pre-NDA access — patent and white paper locked')}
-                </p>
+              <div style={{ marginBottom: '28px' }}>
+                <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', marginBottom: '6px' }}>RECENTLY DELETED</h1>
+                <p style={{ fontSize: '14px', color: '#777' }}>Files are permanently deleted 30 days after being moved here.</p>
+              </div>
+              {trashLoading ? (
+                <p style={{ fontSize: '14px', color: '#555', fontFamily: 'Exo 2, sans-serif' }}>Loading...</p>
+              ) : trashItems.length === 0 ? (
+                <p style={{ fontSize: '14px', color: '#555', fontFamily: 'Exo 2, sans-serif' }}>No deleted files.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                  {trashItems.map((item) => {
+                    const daysLeft = Math.max(0, Math.ceil((new Date(item.expires_at) - new Date()) / (1000 * 60 * 60 * 24)));
+                    const folderLabel = item.original_path.split('/').slice(1, -1).join(' / ');
+                    return (
+                      <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                          <div style={{ minWidth: 0 }}>
+                            <p style={{ fontSize: '14px', fontWeight: '500', color: '#bbb', fontFamily: 'Exo 2, sans-serif', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.file_name}</p>
+                            <p style={{ fontSize: '11px', color: '#444', fontFamily: 'Exo 2, sans-serif', margin: '2px 0 0' }}>{folderLabel} · deleted by {item.trashed_by_email} · {daysLeft}d left</p>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, marginLeft: '12px' }}>
+                          <button onClick={() => restoreFromTrash(item.id)} style={{ fontSize: '13px', color: '#3b82f6', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif' }}>Restore</button>
+                          <button onClick={() => { if (confirm('Permanently delete this file?')) deleteFromTrash(item.id); }} style={{ fontSize: '13px', color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif' }}>Delete</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Documents tab */}
+          {activeTab === 'documents' && activeFolder !== '__trash__' && (
+            <div onClick={() => { if (openMenuPath) setOpenMenuPath(null); if (openFolderMenu) setOpenFolderMenu(null); }}>
+              <div data-tutorial="doc-library" style={{ marginBottom: '28px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                <div>
+                  <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', marginBottom: '6px' }}>
+                    {activeFolder ? activeFolder.split('/').map(p => p.replace(/_/g, ' ').replace(/^\d+\s+/, '')).join(' / ') : 'DOCUMENT LIBRARY'}
+                  </h1>
+                  <p style={{ fontSize: '14px', color: '#777' }}>
+                    {activeFolder
+                      ? `Showing files in ${activeFolder.split('/').map(p => p.replace(/_/g, ' ').replace(/^\d+\s+/, '')).join(' / ')}`
+                      : (isPostNda || isAdmin ? 'Full access — all documents unlocked' : 'Pre-NDA access — patent and white paper locked')}
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
+                  <button onClick={() => setDocView('list')} title="List view" style={{ padding: '7px 10px', background: docView === 'list' ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.04)', border: docView === 'list' ? '1px solid rgba(59,130,246,0.4)' : '1px solid rgba(255,255,255,0.08)', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={docView === 'list' ? '#93c5fd' : '#666'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                  </button>
+                  <button onClick={() => setDocView('grid')} title="Grid view" style={{ padding: '7px 10px', background: docView === 'grid' ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.04)', border: docView === 'grid' ? '1px solid rgba(59,130,246,0.4)' : '1px solid rgba(255,255,255,0.08)', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={docView === 'grid' ? '#93c5fd' : '#666'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                  </button>
+                </div>
               </div>
 
               {/* Drag-and-drop upload zone — visible for employees and admin */}
@@ -702,14 +1136,16 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     </p>
                   ) : (
                     <>
-                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: '10px' }}>
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                        <polyline points="17 8 12 3 7 8"/>
-                        <line x1="12" y1="3" x2="12" y2="15"/>
-                      </svg>
-                      <p style={{ fontSize: '14px', color: '#555', fontFamily: 'Exo 2, sans-serif', margin: 0 }}>
-                        Drop a PDF here — Sol will sort it automatically
-                      </p>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                          <polyline points="17 8 12 3 7 8"/>
+                          <line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                        <p style={{ fontSize: '14px', color: '#555', fontFamily: 'Exo 2, sans-serif', margin: 0 }}>
+                          Drop a PDF here — Sol will sort it automatically
+                        </p>
+                      </div>
                     </>
                   )}
                 </div>
@@ -799,111 +1235,503 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                 </div>
               )}
 
+              {/* Fixed action bar — always reserves space when a folder is active */}
+              {activeFolder && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', minHeight: '34px' }}>
+                  {/* Back button — invisible when not in a subfolder, but always takes up space */}
+                  <button
+                    onClick={() => setActiveFolder(activeFolder.split('/').slice(0, -1).join('/') || null)}
+                    style={{
+                      visibility: activeFolder.includes('/') ? 'visible' : 'hidden',
+                      display: 'flex', alignItems: 'center', gap: '6px',
+                      background: 'none', border: 'none', color: '#888', fontSize: '13px',
+                      fontFamily: 'Exo 2, sans-serif', cursor: 'pointer', padding: '0',
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                    {activeFolder.split('/').slice(0, -1).map(p => p.replace(/_/g, ' ').replace(/^\d+\s+/, '')).join(' / ')}
+                  </button>
+                  {/* New folder — right side, brighter */}
+                  {(isEmployee || isAdmin) && (
+                    creatingFolderIn === activeFolder ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <input autoFocus value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && newFolderName.trim()) createFolder(activeFolder, newFolderName.trim(), false); if (e.key === 'Escape') { setCreatingFolderIn(null); setNewFolderName(''); } }} placeholder="Folder name..." style={{ padding: '7px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '200px' }} />
+                        <button onClick={() => { if (newFolderName.trim()) createFolder(activeFolder, newFolderName.trim(), false); }} style={{ padding: '7px 14px', background: '#3b82f6', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Create</button>
+                        <button onClick={() => { setCreatingFolderIn(null); setNewFolderName(''); }} style={{ padding: '7px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#777', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Cancel</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setCreatingFolderIn(activeFolder)} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.35)', borderRadius: '6px', color: '#93c5fd', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        New folder
+                      </button>
+                    )
+                  )}
+                </div>
+              )}
+
               {docsLoading ? (
                 <p style={{ fontSize: '14px', color: '#777' }}>Loading documents...</p>
-              ) : Object.keys(groupedDocs).length === 0 ? (
-                <p style={{ fontSize: '14px', color: '#777' }}>No documents available yet.</p>
-              ) : (
+              ) : Object.keys(groupedDocs).length === 0 && !(activeFolder && !activeFolder.includes('/') && subfolderMap[activeFolder]?.size > 0) ? (
+                <>
+                  {false && /* new folder now in action bar */ null}
+                  <p style={{ fontSize: '14px', color: '#777' }}>No documents available yet.</p>
+                </>
+              ) : Object.keys(groupedDocs).length === 0 && activeFolder && !activeFolder.includes('/') && subfolderMap[activeFolder]?.size > 0 ? (() => {
+                const subs = [...subfolderMap[activeFolder]].sort();
+                return (
+                  <>
+                    {docView === 'grid' ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '12px' }}>
+                        {subs.map(sub => {
+                          const folderPath = `${activeFolder}/${sub}`;
+                          const isRenaming = renamingFolderPath === folderPath;
+                          return (
+                            <div
+                              key={sub}
+                              draggable={isEmployee || isAdmin}
+                              onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingFolder({ topFolder: activeFolder, sub }); }}
+                              onDragEnd={() => { setDraggingFolder(null); setDragOverFolder(null); }}
+                              onClick={() => !isRenaming && setActiveFolder(folderPath)}
+                              style={{ display: 'flex', flexDirection: 'column', background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '10px', cursor: 'pointer', transition: 'border-color 0.15s', position: 'relative' }}
+                            >
+                              <div style={{ height: '120px', background: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px 10px 0 0', overflow: 'hidden' }}>
+                                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                              </div>
+                              <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  {isRenaming ? (
+                                    <input autoFocus value={renameFolderValue} onChange={(e) => setRenameFolderValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') renameFolder(activeFolder, sub, renameFolderValue); if (e.key === 'Escape') setRenamingFolderPath(null); }} onBlur={() => setRenamingFolderPath(null)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '12px', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 6px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '100%' }} />
+                                  ) : (
+                                    <p style={{ fontSize: '12px', fontWeight: '500', color: '#ddd', fontFamily: 'Exo 2, sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>{sub.replace(/^\d+\s+/, '')}</p>
+                                  )}
+                                </div>
+                                {!isRenaming && (
+                                  <div style={{ position: 'relative', flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                                    <button onClick={(e) => { e.stopPropagation(); setOpenFolderMenu(openFolderMenu === folderPath ? null : folderPath); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 6px', borderRadius: '4px', fontSize: '16px', lineHeight: 1, fontFamily: 'monospace' }}>⋮</button>
+                                    {openFolderMenu === folderPath && (
+                                      <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', right: 0, bottom: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', marginBottom: '4px' }}>
+                                        <button onClick={() => { setOpenFolderMenu(null); setActiveFolder(folderPath); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                        {(isEmployee || isAdmin) && <button onClick={() => { setOpenFolderMenu(null); downloadFolder(activeFolder, sub); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Download</button>}
+                                        {(isEmployee || isAdmin) && <button onClick={() => { setOpenFolderMenu(null); setRenamingFolderPath(folderPath); setRenameFolderValue(sub.replace(/^\d+\s+/, '')); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>}
+                                        {(isEmployee || isAdmin) && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenFolderMenu(null); if (confirm(`Move "${sub.replace(/^\d+\s+/, '')}" and all its contents to trash?`)) moveFolderToTrash(activeFolder, sub); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Move to trash</button></>}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                          <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>NAME</span>
+                          <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>LAST OPENED</span>
+                          <span />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          {subs.map(sub => {
+                            const folderPath = `${activeFolder}/${sub}`;
+                            const isRenaming = renamingFolderPath === folderPath;
+                            return (
+                              <div key={sub} draggable={isEmployee || isAdmin} onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingFolder({ topFolder: activeFolder, sub }); }} onDragEnd={() => { setDraggingFolder(null); setDragOverFolder(null); }} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}>
+                                <div onClick={() => !isRenaming && setActiveFolder(folderPath)} style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+                                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                                  {isRenaming ? (
+                                    <input autoFocus value={renameFolderValue} onChange={(e) => setRenameFolderValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') renameFolder(activeFolder, sub, renameFolderValue); if (e.key === 'Escape') setRenamingFolderPath(null); }} onBlur={() => setRenamingFolderPath(null)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} />
+                                  ) : (
+                                    <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.replace(/^\d+\s+/, '')}</span>
+                                  )}
+                                </div>
+                                <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>—</span>
+                                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                  {!isRenaming && (
+                                    <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+                                      <button onClick={(e) => { e.stopPropagation(); setOpenFolderMenu(openFolderMenu === folderPath ? null : folderPath); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 8px', borderRadius: '4px', fontSize: '18px', lineHeight: 1, fontFamily: 'monospace' }}>⋮</button>
+                                      {openFolderMenu === folderPath && (
+                                        <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', right: 0, top: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+                                          <button onClick={() => { setOpenFolderMenu(null); setActiveFolder(folderPath); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                          {(isEmployee || isAdmin) && <button onClick={() => { setOpenFolderMenu(null); downloadFolder(activeFolder, sub); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Download</button>}
+                                          {(isEmployee || isAdmin) && <button onClick={() => { setOpenFolderMenu(null); setRenamingFolderPath(folderPath); setRenameFolderValue(sub.replace(/^\d+\s+/, '')); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>}
+                                          {(isEmployee || isAdmin) && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenFolderMenu(null); if (confirm(`Move "${sub.replace(/^\d+\s+/, '')}" and all its contents to trash?`)) moveFolderToTrash(activeFolder, sub); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Move to trash</button></>}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </>
+                );
+              })() : !activeFolder ? (() => {
+                const sorted = [...documents].sort((a, b) => {
+                  const aTime = userRecents[a.name] ? new Date(userRecents[a.name]).getTime() : 0;
+                  const bTime = userRecents[b.name] ? new Date(userRecents[b.name]).getTime() : 0;
+                  return bTime - aTime;
+                });
+                const DocRow = (doc) => {
+                  const isMoving = movingDocPath === doc.path;
+                  const isRenaming = renamingDocPath === doc.path;
+                  const canEdit = isEmployee || isAdmin;
+                  const isLocked = doc.restricted && !isPostNda && !isAdmin;
+                  const lastOpened = userRecents[doc.name];
+                  return (
+                    <div
+                      key={doc.path}
+                      draggable={canEdit && !isMoving && !isRenaming}
+                      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingDoc(doc); }}
+                      onDragEnd={() => { setDraggingDoc(null); setDragOverFolder(null); }}
+                      style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: isMoving ? 'rgba(59,130,246,0.06)' : 'rgba(255,255,255,0.02)', border: `1px solid ${isMoving ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)'}`, borderRadius: '6px', opacity: isMoving ? 0.6 : 1, cursor: isMoving ? 'default' : 'pointer', transition: 'opacity 0.15s' }}
+                    >
+                      {/* Name column */}
+                      <div onClick={() => !isRenaming && openDocument(doc.path, doc.name)} style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+                        {isLocked ? (
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        ) : (
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        )}
+                        {isRenaming ? (
+                          <input autoFocus value={renameValue} onChange={(e) => setRenameValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleRenameDoc(doc, renameValue); if (e.key === 'Escape') setRenamingDocPath(null); }} onBlur={() => setRenamingDocPath(null)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} />
+                        ) : (
+                          <span style={{ fontSize: '14px', fontWeight: '500', color: isLocked ? '#555' : '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</span>
+                        )}
+                        {doc.restricted && !isRenaming && <span style={{ fontSize: '11px', padding: '2px 7px', background: 'rgba(59,130,246,0.1)', color: '#3b82f6', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', flexShrink: 0 }}>POST-NDA</span>}
+                      </div>
+                      {/* Last Opened column */}
+                      <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>
+                        {isMoving ? <span style={{ color: '#3b82f6' }}>Moving...</span> : lastOpened ? `${new Date(lastOpened).toLocaleDateString(undefined, { day: '2-digit', month: 'short' })} ${new Date(lastOpened).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}` : '—'}
+                      </span>
+                      {/* Actions column */}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                        {!isMoving && !isRenaming && (
+                          <div style={{ position: 'relative' }}>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setOpenMenuPath(openMenuPath === doc.path ? null : doc.path); }}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 8px', borderRadius: '4px', fontSize: '18px', lineHeight: 1, fontFamily: 'monospace' }}
+                            >⋮</button>
+                            {openMenuPath === doc.path && (
+                              <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', right: 0, top: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+                                {!isLocked && <button onClick={() => { setOpenMenuPath(null); openDocument(doc.path, doc.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>}
+                                {isLocked && <button onClick={() => { setOpenMenuPath(null); openDocument(doc.path, doc.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#555', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>NDA required</button>}
+                                {!isLocked && <button onClick={() => { setOpenMenuPath(null); downloadDocument(doc.path, doc.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Download</button>}
+                                {canEdit && !isLocked && <button onClick={() => { setOpenMenuPath(null); setRenamingDocPath(doc.path); setRenameValue(doc.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>}
+                                {canEdit && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenMenuPath(null); if (confirm(`Move "${doc.name}" to trash?`)) moveToTrash(doc.path, doc.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Move to trash</button></>}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                };
+                const DocCard = (doc) => {
+                  const isMoving = movingDocPath === doc.path;
+                  const isRenaming = renamingDocPath === doc.path;
+                  const canEdit = isEmployee || isAdmin;
+                  const isLocked = doc.restricted && !isPostNda && !isAdmin;
+                  const lastOpened = userRecents[doc.name];
+                  const previewUrl = previewUrls[doc.path];
+                  const isPdf = doc.mimeType === 'application/pdf' || doc.name.toLowerCase().endsWith('.pdf');
+                  return (
+                    <div
+                      key={doc.path}
+                      draggable={canEdit && !isMoving && !isRenaming}
+                      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingDoc(doc); }}
+                      onDragEnd={() => { setDraggingDoc(null); setDragOverFolder(null); }}
+                      onClick={() => !isRenaming && !isMoving && openDocument(doc.path, doc.name)}
+                      style={{ display: 'flex', flexDirection: 'column', background: isMoving ? 'rgba(59,130,246,0.06)' : '#111', border: `1px solid ${isMoving ? 'rgba(59,130,246,0.3)' : 'rgba(255,255,255,0.07)'}`, borderRadius: '10px', overflow: 'hidden', cursor: isMoving ? 'default' : 'pointer', opacity: isMoving ? 0.6 : 1, transition: 'border-color 0.15s' }}
+                    >
+                      {/* Preview area */}
+                      <div style={{ height: '160px', background: '#1a1a1a', overflow: 'hidden', position: 'relative', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                        {isPdf && pdfThumbnails[doc.path] ? (
+                          <img src={pdfThumbnails[doc.path]} alt={doc.name} style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top', display: 'block' }} />
+                        ) : isPdf ? (
+                          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <div style={{ width: '20px', height: '20px', borderRadius: '50%', border: '2px solid #2a2a2a', borderTopColor: '#444', animation: 'spin 1s linear infinite' }} />
+                          </div>
+                        ) : (
+                          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <FileTypeIcon name={doc.name} size={48} />
+                          </div>
+                        )}
+                        {doc.restricted && (
+                          <div style={{ position: 'absolute', top: '8px', right: '8px', fontSize: '10px', padding: '2px 6px', background: 'rgba(59,130,246,0.2)', color: '#93c5fd', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif', backdropFilter: 'blur(4px)' }}>POST-NDA</div>
+                        )}
+                      </div>
+                      {/* Footer */}
+                      <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <FileTypeIcon name={doc.name} size={28} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          {isRenaming ? (
+                            <input autoFocus value={renameValue} onChange={(e) => setRenameValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleRenameDoc(doc, renameValue); if (e.key === 'Escape') setRenamingDocPath(null); }} onBlur={() => setRenamingDocPath(null)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '12px', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 6px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '100%' }} />
+                          ) : (
+                            <p style={{ fontSize: '12px', fontWeight: '500', color: '#ddd', fontFamily: 'Exo 2, sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>{doc.name}</p>
+                          )}
+                          <p style={{ fontSize: '11px', color: '#3a3a3a', fontFamily: 'Exo 2, sans-serif', margin: '2px 0 0' }}>
+                            {isMoving ? 'Moving...' : lastOpened ? `Opened ${new Date(lastOpened).toLocaleDateString(undefined, { day: '2-digit', month: 'short' })}` : 'Not yet opened'}
+                          </p>
+                        </div>
+                        {!isMoving && !isRenaming && (
+                          <div style={{ position: 'relative', flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setOpenMenuPath(openMenuPath === doc.path ? null : doc.path); }}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 6px', borderRadius: '4px', fontSize: '16px', lineHeight: 1, fontFamily: 'monospace' }}
+                            >⋮</button>
+                            {openMenuPath === doc.path && (
+                              <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', right: 0, bottom: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', marginBottom: '4px' }}>
+                                <button onClick={() => { setOpenMenuPath(null); openDocument(doc.path, doc.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                {!isLocked && <button onClick={() => { setOpenMenuPath(null); downloadDocument(doc.path, doc.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Download</button>}
+                                {canEdit && !isLocked && <button onClick={() => { setOpenMenuPath(null); setRenamingDocPath(doc.path); setRenameValue(doc.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>}
+                                {canEdit && !isLocked && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenMenuPath(null); if (confirm(`Move "${doc.name}" to trash?`)) moveToTrash(doc.path, doc.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Move to trash</button></>}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                };
+                return docView === 'grid' ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '12px' }}>
+                    {sorted.map(doc => DocCard(doc))}
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>NAME</span>
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>LAST OPENED</span>
+                      <span />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                      {sorted.map(doc => DocRow(doc))}
+                    </div>
+                  </>
+                );
+              })() : (
+                <>
+                {activeFolder && !activeFolder.includes('/') && subfolderMap[activeFolder]?.size > 0 && (
+                  <div style={{ marginBottom: '24px' }}>
+                    <p style={{ fontSize: '12px', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', marginBottom: '10px' }}>SUBFOLDERS</p>
+                    {docView === 'grid' ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '12px' }}>
+                        {[...subfolderMap[activeFolder]].sort().map(sub => {
+                          const folderPath = `${activeFolder}/${sub}`;
+                          const isRenaming = renamingFolderPath === folderPath;
+                          return (
+                            <div
+                              key={sub}
+                              draggable={isEmployee || isAdmin}
+                              onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingFolder({ topFolder: activeFolder, sub }); }}
+                              onDragEnd={() => { setDraggingFolder(null); setDragOverFolder(null); }}
+                              onClick={() => !isRenaming && setActiveFolder(folderPath)}
+                              style={{ display: 'flex', flexDirection: 'column', background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '10px', overflow: 'hidden', cursor: 'pointer', transition: 'border-color 0.15s' }}
+                            >
+                              <div style={{ height: '120px', background: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                              </div>
+                              <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  {isRenaming ? (
+                                    <input autoFocus value={renameFolderValue} onChange={(e) => setRenameFolderValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') renameFolder(activeFolder, sub, renameFolderValue); if (e.key === 'Escape') setRenamingFolderPath(null); }} onBlur={() => setRenamingFolderPath(null)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '12px', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 6px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '100%' }} />
+                                  ) : (
+                                    <p style={{ fontSize: '12px', fontWeight: '500', color: '#ddd', fontFamily: 'Exo 2, sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>{sub.replace(/^\d+\s+/, '')}</p>
+                                  )}
+                                </div>
+                                {!isRenaming && (
+                                  <div style={{ position: 'relative', flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                                    <button onClick={(e) => { e.stopPropagation(); setOpenFolderMenu(openFolderMenu === folderPath ? null : folderPath); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 6px', borderRadius: '4px', fontSize: '16px', lineHeight: 1, fontFamily: 'monospace' }}>⋮</button>
+                                    {openFolderMenu === folderPath && (
+                                      <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', right: 0, bottom: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', marginBottom: '4px' }}>
+                                        <button onClick={() => { setOpenFolderMenu(null); setActiveFolder(folderPath); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                        {(isEmployee || isAdmin) && <button onClick={() => { setOpenFolderMenu(null); downloadFolder(activeFolder, sub); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Download</button>}
+                                        {(isEmployee || isAdmin) && <button onClick={() => { setOpenFolderMenu(null); setRenamingFolderPath(folderPath); setRenameFolderValue(sub.replace(/^\d+\s+/, '')); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>}
+                                        {(isEmployee || isAdmin) && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenFolderMenu(null); if (confirm(`Move "${sub.replace(/^\d+\s+/, '')}" and all its contents to trash?`)) moveFolderToTrash(activeFolder, sub); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Move to trash</button></>}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                          <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>NAME</span>
+                          <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>LAST OPENED</span>
+                          <span />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          {[...subfolderMap[activeFolder]].sort().map(sub => {
+                            const folderPath = `${activeFolder}/${sub}`;
+                            const isRenaming = renamingFolderPath === folderPath;
+                            return (
+                              <div key={sub} draggable={isEmployee || isAdmin} onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingFolder({ topFolder: activeFolder, sub }); }} onDragEnd={() => { setDraggingFolder(null); setDragOverFolder(null); }} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}>
+                                <div onClick={() => !isRenaming && setActiveFolder(folderPath)} style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+                                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                                  {isRenaming ? (
+                                    <input autoFocus value={renameFolderValue} onChange={(e) => setRenameFolderValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') renameFolder(activeFolder, sub, renameFolderValue); if (e.key === 'Escape') setRenamingFolderPath(null); }} onBlur={() => setRenamingFolderPath(null)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} />
+                                  ) : (
+                                    <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.replace(/^\d+\s+/, '')}</span>
+                                  )}
+                                </div>
+                                <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>—</span>
+                                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                  {!isRenaming && (
+                                    <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+                                      <button onClick={(e) => { e.stopPropagation(); setOpenFolderMenu(openFolderMenu === folderPath ? null : folderPath); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 8px', borderRadius: '4px', fontSize: '18px', lineHeight: 1, fontFamily: 'monospace' }}>⋮</button>
+                                      {openFolderMenu === folderPath && (
+                                        <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', right: 0, top: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+                                          <button onClick={() => { setOpenFolderMenu(null); setActiveFolder(folderPath); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                          {(isEmployee || isAdmin) && <button onClick={() => { setOpenFolderMenu(null); downloadFolder(activeFolder, sub); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Download</button>}
+                                          {(isEmployee || isAdmin) && <button onClick={() => { setOpenFolderMenu(null); setRenamingFolderPath(folderPath); setRenameFolderValue(sub.replace(/^\d+\s+/, '')); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>}
+                                          {(isEmployee || isAdmin) && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenFolderMenu(null); if (confirm(`Move "${sub.replace(/^\d+\s+/, '')}" and all its contents to trash?`)) moveFolderToTrash(activeFolder, sub); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Move to trash</button></>}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
                   {Object.entries(groupedDocs).map(([folder, files]) => (
                     <div key={folder}>
                       <p style={{ fontSize: '12px', color: '#777', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', marginBottom: '10px' }}>
-                        {folder.split(' / ').pop().replace(/^\d+\s+/, '').toUpperCase()}
+                        {folder.split(' / ').pop().replace(/_/g, ' ').replace(/^\d+\s+/, '').toUpperCase()}
                       </p>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                        {files.map(doc => {
-                          const isMoving = movingDocPath === doc.path;
-                          const isRenaming = renamingDocPath === doc.path;
-                          const canEdit = isEmployee || isAdmin;
-                          return (
-                          <div
-                            key={doc.path}
-                            draggable={canEdit && !isMoving && !isRenaming}
-                            onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingDoc(doc); }}
-                            onDragEnd={() => { setDraggingDoc(null); setDragOverFolder(null); }}
-                            style={{
-                              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                              padding: '14px 18px',
-                              background: isMoving ? 'rgba(59,130,246,0.06)' : 'rgba(255,255,255,0.02)',
-                              border: `1px solid ${isMoving ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)'}`,
-                              borderRadius: '6px',
-                              opacity: isMoving ? 0.6 : 1,
-                              cursor: isMoving ? 'default' : 'pointer',
-                              transition: 'opacity 0.15s',
-                            }}
-                          >
-                            <div
-                              onClick={() => !isRenaming && openDocument(doc.path, doc.name)}
-                              style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}
-                            >
-                              {doc.restricted && !isPostNda && !isAdmin ? (
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-                                  <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-                                </svg>
-                              ) : (
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                                  <polyline points="14 2 14 8 20 8"/>
-                                </svg>
-                              )}
-                              {isRenaming ? (
-                                <input
-                                  autoFocus
-                                  value={renameValue}
-                                  onChange={(e) => setRenameValue(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleRenameDoc(doc, renameValue);
-                                    if (e.key === 'Escape') setRenamingDocPath(null);
-                                  }}
-                                  onBlur={() => setRenamingDocPath(null)}
-                                  onClick={(e) => e.stopPropagation()}
-                                  style={{ fontSize: '15px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }}
-                                />
-                              ) : (
-                                <span style={{ fontSize: '15px', fontWeight: '500', color: doc.restricted && !isPostNda && !isAdmin ? '#555' : '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</span>
-                              )}
-                              {doc.restricted && !isRenaming && (
-                                <span style={{ fontSize: '11px', padding: '2px 7px', background: 'rgba(59,130,246,0.1)', color: '#3b82f6', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', flexShrink: 0 }}>POST-NDA</span>
-                              )}
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0, marginLeft: '12px' }}>
-                              {isMoving ? (
-                                <span style={{ fontSize: '13px', color: '#3b82f6', fontFamily: 'Exo 2, sans-serif' }}>Moving...</span>
-                              ) : isRenaming ? null : (
-                                <>
-                                  {canEdit && !(doc.restricted && !isPostNda && !isAdmin) && (
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); setRenamingDocPath(doc.path); setRenameValue(doc.name); }}
-                                      style={{ fontSize: '13px', color: '#555', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif' }}
-                                    >
-                                      Rename
-                                    </button>
-                                  )}
-                                  {doc.restricted && !isPostNda && !isAdmin ? (
-                                    <button onClick={(e) => { e.stopPropagation(); openDocument(doc.path, doc.name); }} style={{ fontSize: '13px', color: '#555', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif' }}>
-                                      NDA required →
-                                    </button>
+                      {docView === 'list' ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          {files.map(doc => {
+                            const isMoving = movingDocPath === doc.path;
+                            const isRenaming = renamingDocPath === doc.path;
+                            const canEdit = isEmployee || isAdmin;
+                            const isLocked = doc.restricted && !isPostNda && !isAdmin;
+                            return (
+                              <div
+                                key={doc.path}
+                                draggable={canEdit && !isMoving && !isRenaming}
+                                onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingDoc(doc); }}
+                                onDragEnd={() => { setDraggingDoc(null); setDragOverFolder(null); }}
+                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', background: isMoving ? 'rgba(59,130,246,0.06)' : 'rgba(255,255,255,0.02)', border: `1px solid ${isMoving ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)'}`, borderRadius: '6px', opacity: isMoving ? 0.6 : 1, cursor: isMoving ? 'default' : 'pointer', transition: 'opacity 0.15s' }}
+                              >
+                                <div onClick={() => !isRenaming && openDocument(doc.path, doc.name)} style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+                                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                  {isRenaming ? (
+                                    <input autoFocus value={renameValue} onChange={(e) => setRenameValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleRenameDoc(doc, renameValue); if (e.key === 'Escape') setRenamingDocPath(null); }} onBlur={() => setRenamingDocPath(null)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '15px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} />
                                   ) : (
-                                    <button onClick={(e) => { e.stopPropagation(); openDocument(doc.path, doc.name); }} style={{ fontSize: '13px', color: '#3b82f6', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif' }}>
-                                      Open →
-                                    </button>
+                                    <span style={{ fontSize: '15px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</span>
                                   )}
-                                </>
-                              )}
-                            </div>
-                          </div>
-                          );
-                        })}
-                      </div>
+                                  {doc.restricted && !isRenaming && <span style={{ fontSize: '11px', padding: '2px 7px', background: 'rgba(59,130,246,0.1)', color: '#3b82f6', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', flexShrink: 0 }}>POST-NDA</span>}
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0, marginLeft: '12px' }}>
+                                  {isMoving ? (
+                                    <span style={{ fontSize: '13px', color: '#3b82f6', fontFamily: 'Exo 2, sans-serif' }}>Moving...</span>
+                                  ) : isRenaming ? null : (
+                                    <>
+                                      {canEdit && !isLocked && <button onClick={(e) => { e.stopPropagation(); setRenamingDocPath(doc.path); setRenameValue(doc.name); }} style={{ fontSize: '13px', color: '#555', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif' }}>Rename</button>}
+                                      <button onClick={(e) => { e.stopPropagation(); openDocument(doc.path, doc.name); }} style={{ fontSize: '13px', color: '#3b82f6', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif' }}>Open →</button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '12px' }}>
+                          {files.map(doc => {
+                            const isMoving = movingDocPath === doc.path;
+                            const isRenaming = renamingDocPath === doc.path;
+                            const canEdit = isEmployee || isAdmin;
+                            const isLocked = doc.restricted && !isPostNda && !isAdmin;
+                            const previewUrl = previewUrls[doc.path];
+                            const isPdf = doc.mimeType === 'application/pdf' || doc.name.toLowerCase().endsWith('.pdf');
+                            return (
+                              <div
+                                key={doc.path}
+                                draggable={canEdit && !isMoving && !isRenaming}
+                                onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingDoc(doc); }}
+                                onDragEnd={() => { setDraggingDoc(null); setDragOverFolder(null); }}
+                                onClick={() => !isRenaming && !isMoving && openDocument(doc.path, doc.name)}
+                                style={{ display: 'flex', flexDirection: 'column', background: isMoving ? 'rgba(59,130,246,0.06)' : '#111', border: `1px solid ${isMoving ? 'rgba(59,130,246,0.3)' : 'rgba(255,255,255,0.07)'}`, borderRadius: '10px', overflow: 'hidden', cursor: isMoving ? 'default' : 'pointer', opacity: isMoving ? 0.6 : 1, transition: 'border-color 0.15s' }}
+                              >
+                                <div style={{ height: '160px', background: '#1a1a1a', overflow: 'hidden', position: 'relative', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                                  {isLocked ? (
+                                    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                      <span style={{ fontSize: '11px', color: '#333', fontFamily: 'Exo 2, sans-serif' }}>NDA required</span>
+                                    </div>
+                                  ) : isPdf && pdfThumbnails[doc.path] ? (
+                                    <img src={pdfThumbnails[doc.path]} alt={doc.name} style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top', display: 'block' }} />
+                                  ) : !isPdf ? (
+                                    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                      <FileTypeIcon name={doc.name} size={48} />
+                                    </div>
+                                  ) : (
+                                    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                      <div style={{ width: '20px', height: '20px', borderRadius: '50%', border: '2px solid #2a2a2a', borderTopColor: '#444' }} />
+                                    </div>
+                                  )}
+                                  {doc.restricted && (
+                                    <div style={{ position: 'absolute', top: '8px', right: '8px', fontSize: '10px', padding: '2px 6px', background: 'rgba(59,130,246,0.2)', color: '#93c5fd', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif' }}>POST-NDA</div>
+                                  )}
+                                </div>
+                                <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                  <FileTypeIcon name={doc.name} size={28} />
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    {isRenaming ? (
+                                      <input autoFocus value={renameValue} onChange={(e) => setRenameValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleRenameDoc(doc, renameValue); if (e.key === 'Escape') setRenamingDocPath(null); }} onBlur={() => setRenamingDocPath(null)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '12px', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 6px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '100%' }} />
+                                    ) : (
+                                      <p style={{ fontSize: '12px', fontWeight: '500', color: '#ddd', fontFamily: 'Exo 2, sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>{doc.name}</p>
+                                    )}
+                                    <p style={{ fontSize: '11px', color: '#3a3a3a', fontFamily: 'Exo 2, sans-serif', margin: '2px 0 0' }}>{isMoving ? 'Moving...' : 'Not yet opened'}</p>
+                                  </div>
+                                  {!isMoving && !isRenaming && (
+                                    <div style={{ position: 'relative', flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); setOpenMenuPath(openMenuPath === doc.path ? null : doc.path); }}
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 6px', borderRadius: '4px', fontSize: '16px', lineHeight: 1, fontFamily: 'monospace' }}
+                                      >⋮</button>
+                                      {openMenuPath === doc.path && (
+                                        <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', right: 0, bottom: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', marginBottom: '4px' }}>
+                                          <button onClick={() => { setOpenMenuPath(null); openDocument(doc.path, doc.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                          {!isLocked && <button onClick={() => { setOpenMenuPath(null); downloadDocument(doc.path, doc.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Download</button>}
+                                          {canEdit && !isLocked && <button onClick={() => { setOpenMenuPath(null); setRenamingDocPath(doc.path); setRenameValue(doc.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>}
+                                          {canEdit && !isLocked && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenMenuPath(null); if (confirm(`Move "${doc.name}" to trash?`)) moveToTrash(doc.path, doc.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Move to trash</button></>}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
-              )}
+              </>
+            )}
             </div>
           )}
 
           {/* Sol tab — full center view */}
+
           {activeTab === 'sol' && (
   <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', flexDirection: 'column' }}>
     <SolChat
@@ -1014,12 +1842,112 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
           )}
 
           {/* Activity — admin */}
-          {activeTab === 'activity' && isAdmin && (
-            <div>
-              <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', marginBottom: '6px' }}>ACTIVITY</h1>
-              <p style={{ fontSize: '14px', color: '#777', marginBottom: '28px' }}>Audit log — coming soon</p>
-            </div>
-          )}
+          {activeTab === 'activity' && isAdmin && (() => {
+            const actionLabel = (action) => action === 'document_viewed' ? 'Opened document' : action === 'sol_document_query' ? 'Sol (with docs)' : 'Sol query';
+            const fmtTime = (ts) => ts.toLocaleDateString(undefined, { day: '2-digit', month: 'short' }) + ' ' + ts.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+            const toggleRow = (rowKey) => setExpandedActivityRows(prev => { const next = new Set(prev); if (next.has(rowKey)) next.delete(rowKey); else next.add(rowKey); return next; });
+
+            const LogRow = ({ log, i, total, showUser, showEvent }) => {
+              const rowKey = log.id || i;
+              const isExpanded = expandedActivityRows.has(rowKey);
+              const detail = log.document_name || '';
+              const ts = new Date(log.created_at);
+              return (
+                <div style={{ borderBottom: i < total - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr 220px', padding: '11px 16px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '12px', color: '#555', fontFamily: 'Exo 2, sans-serif' }}>{fmtTime(ts)}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      {showEvent && <span style={{ fontSize: '13px', color: '#ccc', fontFamily: 'Exo 2, sans-serif' }}>{actionLabel(log.action)}</span>}
+                      {detail && <button onClick={() => toggleRow(rowKey)} style={{ background: 'none', border: 'none', color: '#3b82f6', fontSize: '12px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer', padding: 0 }}>{isExpanded ? 'hide' : 'details'}</button>}
+                    </div>
+                    {showUser && <span style={{ fontSize: '12px', color: '#555', fontFamily: 'Exo 2, sans-serif', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{log.user_email}</span>}
+                  </div>
+                  {isExpanded && detail && (
+                    <div style={{ padding: '0 16px 11px 176px' }}>
+                      <p style={{ fontSize: '12px', color: '#777', fontFamily: 'Exo 2, sans-serif', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '4px', padding: '8px 12px' }}>{detail}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            };
+
+            const toggleGroup = (key) => setExpandedActivityGroups(prev => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+
+            const GroupedTable = ({ groups, showUser, showEvent }) => (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {groups.map(([groupName, logs]) => {
+                  const open = expandedActivityGroups.has(groupName);
+                  return (
+                    <div key={groupName} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', overflow: 'hidden' }}>
+                      <button onClick={() => toggleGroup(groupName)} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 16px', background: 'none', border: 'none', cursor: 'pointer' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <span style={{ fontSize: '13px', fontWeight: '600', color: '#ccc', fontFamily: 'Exo 2, sans-serif' }}>{groupName}</span>
+                          <span style={{ fontSize: '12px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{logs.length} event{logs.length !== 1 ? 's' : ''}</span>
+                        </div>
+                        <span style={{ fontSize: '11px', color: '#555', fontFamily: 'Exo 2, sans-serif' }}>{open ? '▲' : '▼'}</span>
+                      </button>
+                      {open && (
+                        <>
+                          <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr 220px', padding: '7px 16px', borderTop: '1px solid rgba(255,255,255,0.06)', borderBottom: '1px solid rgba(255,255,255,0.04)', background: 'rgba(255,255,255,0.02)' }}>
+                            <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>TIME</span>
+                            <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>{showEvent ? 'EVENT' : ''}</span>
+                            <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>{showUser ? 'USER' : ''}</span>
+                          </div>
+                          {logs.map((log, i) => <LogRow key={log.id || i} log={log} i={i} total={logs.length} showUser={showUser} showEvent={showEvent} />)}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+
+            const byUser = () => {
+              const map = {};
+              activityLogs.forEach(log => { if (!map[log.user_email]) map[log.user_email] = []; map[log.user_email].push(log); });
+              return Object.entries(map).sort((a, b) => b[1].length - a[1].length);
+            };
+
+            const byType = () => {
+              const order = ['document_viewed', 'sol_document_query', 'sol_query'];
+              const map = {};
+              activityLogs.forEach(log => { if (!map[log.action]) map[log.action] = []; map[log.action].push(log); });
+              return order.filter(k => map[k]).map(k => [actionLabel(k), map[k]]);
+            };
+
+            return (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                  <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em' }}>ACTIVITY</h1>
+                  <button onClick={loadActivity} style={{ padding: '7px 14px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#aaa', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Refresh</button>
+                </div>
+                <p style={{ fontSize: '14px', color: '#777', marginBottom: '16px' }}>Audit log — document views and Sol queries</p>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '24px' }}>
+                  {[['recency', 'By recency'], ['user', 'By user'], ['type', 'By type']].map(([id, label]) => (
+                    <button key={id} onClick={() => setActivityView(id)} style={{ padding: '7px 16px', background: activityView === id ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.04)', border: activityView === id ? '1px solid rgba(59,130,246,0.4)' : '1px solid rgba(255,255,255,0.08)', borderRadius: '6px', color: activityView === id ? '#93c5fd' : '#666', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>{label}</button>
+                  ))}
+                </div>
+                {activityLoading ? (
+                  <p style={{ fontSize: '14px', color: '#555', fontFamily: 'Exo 2, sans-serif' }}>Loading...</p>
+                ) : activityLogs.length === 0 ? (
+                  <p style={{ fontSize: '14px', color: '#555', fontFamily: 'Exo 2, sans-serif' }}>No activity recorded yet.</p>
+                ) : activityView === 'recency' ? (
+                  <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', overflow: 'hidden' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr 220px', padding: '10px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.03)' }}>
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>TIME</span>
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>EVENT</span>
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>USER</span>
+                    </div>
+                    {activityLogs.map((log, i) => <LogRow key={log.id || i} log={log} i={i} total={activityLogs.length} showUser={true} showEvent={true} />)}
+                  </div>
+                ) : activityView === 'user' ? (
+                  <GroupedTable groups={byUser()} showUser={false} showEvent={true} />
+                ) : (
+                  <GroupedTable groups={byType()} showUser={true} showEvent={false} />
+                )}
+              </div>
+            );
+          })()}
 
         </div>
 
