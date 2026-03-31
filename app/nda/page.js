@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@supabase/supabase-js'
 
@@ -9,7 +9,7 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 )
 
-export default function NdaPage() {
+function NdaContent() {
   const searchParams = useSearchParams()
   const router       = useRouter()
   const event        = searchParams.get('event')
@@ -223,5 +223,13 @@ export default function NdaPage() {
         </button>
       </div>
     </div>
+  )
+}
+
+export default function NdaPage() {
+  return (
+    <Suspense fallback={null}>
+      <NdaContent />
+    </Suspense>
   )
 }
