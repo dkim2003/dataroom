@@ -30,24 +30,32 @@ No test framework is configured. Env vars are in `.env` (not `.env.local`).
 
 ```
 app/
-  page.js                            — Redirects to /login
-  layout.js                          — Root layout; loads PDF.js + JSZip via CDN; title "SpaceLaunch VDR"
-  login/page.js                      — Multi-step auth UI (greeting → type select → sign in)
-  dashboard/page.js                  — Main VDR: document library + Sol AI chat + due diligence
-  dashboard/admin/page.js            — Admin panel: user management, role assignment, "Create Standard Subfolders" button
-  nda/page.js                        — NDA signing page (DocuSign embedded flow)
-  api/sol/route.js                   — Sol AI assistant endpoint (Claude + doc reading)
-  api/documents/route.js             — Document listing; returns { documents, folderPaths } — folderPaths includes ALL subdirs (even empty)
-  api/documents/signed-url/route.js  — Temporary download/view URLs (60s expiry); returns { requiresNda: true } for restricted docs
-  api/documents/move/route.js        — Move/rename docs (download → re-upload → delete)
-  api/upload/route.js                — File upload to Supabase Storage (admin + employees)
-  api/sort/route.js                  — AI auto-sort: reads PDF with Claude, returns folder + isRestricted + diligenceChecked
-  api/nda-sign/route.js              — Creates DocuSign envelope from template, returns embedded signing URL
-  api/nda-complete/route.js          — Upgrades user role from pre_nda_* to post_nda_* after signing
-  api/tutorial-complete/route.js     — Sets has_seen_tutorial = true (uses service role to bypass RLS)
-  api/setup/subfolders/route.js      — POST (admin only): creates 27 standard subfolder .keep placeholders
+  page.js                               — Redirects to /login
+  layout.js                             — Root layout; loads PDF.js + JSZip via CDN; title "SpaceLaunch VDR"
+  login/page.js                         — Multi-step auth UI (greeting → type select → sign in)
+  dashboard/page.js                     — Main VDR: document library + Sol AI chat + due diligence
+  dashboard/admin/page.js               — Admin panel: user management, role assignment, "Create Standard Subfolders" button
+  nda/page.js                           — NDA signing page (DocuSign embedded flow); useSearchParams wrapped in <Suspense>
+  api/sol/route.js                      — Sol AI assistant endpoint (Claude + doc reading + web_search tool)
+  api/documents/route.js                — Document listing; returns { documents, folderPaths } — folderPaths includes ALL subdirs (even empty)
+  api/documents/signed-url/route.js     — Temporary download/view URLs (60s expiry); returns { requiresNda: true } for restricted docs
+  api/documents/preview-urls/route.js   — Batch signed URLs for grid view thumbnails (POST, array of paths)
+  api/documents/download/route.js       — Streams file bytes for direct download (avoids browser redirect to signed URL)
+  api/documents/move/route.js           — Move/rename docs (download → re-upload → delete)
+  api/upload/route.js                   — File upload to Supabase Storage (admin + employees)
+  api/sort/route.js                     — AI auto-sort: reads PDF with Claude, returns folder + isRestricted + diligenceChecked
+  api/folders/route.js                  — POST: creates a new subfolder .keep placeholder
+  api/trash/route.js                    — GET: list trash items (auto-purges expired); POST: move file to trash
+  api/trash/restore/route.js            — POST: restore a trashed file back to its original path
+  api/trash/delete/route.js             — POST: permanently delete a file from trash
+  api/activity/route.js                 — GET: audit log entries for the activity feed
+  api/activity/user-recents/route.js    — GET: per-user last-opened timestamps for "Last Opened" column
+  api/nda-sign/route.js                 — Creates DocuSign envelope from template, returns embedded signing URL
+  api/nda-complete/route.js             — Upgrades user role from pre_nda_* to post_nda_* after signing
+  api/tutorial-complete/route.js        — Sets has_seen_tutorial = true (uses service role to bypass RLS)
+  api/setup/subfolders/route.js         — POST (admin only): creates 27 standard subfolder .keep placeholders
 public/
-  favicon.svg                        — Rocket SVG favicon
+  favicon.svg                           — Rocket SVG favicon
 ```
 
 All pages are client components (`"use client"`). API routes run server-side and use `SUPABASE_SERVICE_ROLE_KEY`.
@@ -86,20 +94,28 @@ The `documents` API returns both `documents` (files) and `folderPaths` (all fold
 - Grid view: folder cards with preview area (big folder icon), footer (name + three-dot menu), draggable
 - List view: rows matching file list style — NAME / LAST OPENED / three-dot menu columns
 
+**Three-dot menu on files:** Open, Download, Rename (move API), Move to trash
+- `openMenuPath` state tracks which file's menu is open; closed via `useEffect` document-level click listener
+
 **Three-dot menu on subfolders:** Open, Download (JSZip all files → .zip), Rename (moves all files), Move to trash (moves all files)
 - `openFolderMenu` state tracks which folder's menu is open; closed via `useEffect` document-level click listener
 - `draggingFolder` state enables drag-and-drop of subfolders to other top-level folders
+
+**Trash system:** Deleted files (via three-dot menu) are moved to a `trash` table in Supabase, not hard-deleted. "Recently Deleted" sidebar button (employees/admin only) shows trashed items. From there users can Restore (moves file back to original path) or permanently Delete. Auto-purge of expired items runs on GET.
+
+**New Folder button:** Blue button in action bar (top-right above document list) when inside a top-level folder. Creates a `.keep` placeholder file via `/api/folders`.
 
 **Standard subfolder structure** (27 subfolders across 10 top-level folders) created via admin panel → "Create Standard Subfolders". All currently in `general/` prefix.
 
 The `due_diligence` table tracks investor checklist items with `id`, `item`, `position`, `checked` fields. The sort API auto-checks items when matching documents are uploaded.
 
-All document views are logged to `audit_log` table.
+All document views are logged to `audit_log` table. Last-opened timestamps per user come from `/api/activity/user-recents` and are shown in the "Last Opened" column in list view.
 
 ### Document View (dashboard)
 
-- **List/grid toggle** (`docView` state): persists within session
-- **Grid view**: PDF thumbnails rendered via PDF.js canvas (not iframe — avoids Chrome PDF toolbar); saved as JPEG data URLs in `pdfThumbnails` state
+- **List/grid toggle** (`docView` state): buttons in top-right of doc library header; `data-tutorial="view-toggle"`
+- **Grid view**: batch-fetches preview URLs via `/api/documents/preview-urls`, then renders PDF thumbnails via PDF.js canvas (not iframe — avoids Chrome PDF toolbar); saved as JPEG data URLs in `pdfThumbnails` state
+- **List view**: shows NAME / LAST OPENED / action columns; last-opened pulled from `userRecents` state
 - **No lock styling** on restricted docs in grid — restricted badge shown instead; clicking redirects to NDA
 - **Action bar** (below upload zone, above content): back button left + New folder button right (blue); always rendered when `activeFolder` is set
 - **New folder button**: bright blue styling (`rgba(59,130,246,0.15)` bg, `#93c5fd` text)
@@ -119,8 +135,9 @@ DocuSign uses RS256 JWT auth (service integration). Private key stored in `.env`
 ### Tutorial System
 
 Dashboard shows a spotlight tutorial on first login (tracked via `profiles.has_seen_tutorial`).
-- Investors see `INVESTOR_TUTORIAL_STEPS`, employees see `EMPLOYEE_TUTORIAL_STEPS`
+- Investors see `INVESTOR_TUTORIAL_STEPS` (5 steps), employees see `EMPLOYEE_TUTORIAL_STEPS` (6 steps)
 - Spotlight uses `box-shadow: 0 0 0 9999px rgba(0,0,0,0.78)` trick with `data-tutorial` attributes
+- `data-tutorial` targets in use: `folders`, `doc-library`, `view-toggle`, `sol-panel`, `pitchdeck-tab`, `upload-zone`, `trash-nav`, `diligence-tab`
 - Completion calls `/api/tutorial-complete` (service role) to bypass RLS
 
 ### Sol AI Assistant

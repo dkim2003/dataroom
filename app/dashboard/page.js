@@ -12,17 +12,20 @@ const supabase = createClient(
 const ADMIN_EMAIL = 'contact@kimduhyun.com';
 
 const INVESTOR_TUTORIAL_STEPS = [
-  { target: 'doc-library', title: 'Document Library', description: 'Browse all documents about Space Launch Technologies. Click any file to open it.' },
-  { target: 'sol-panel', title: 'Sol AI Assistant', description: 'Ask Sol anything about the company, technology, financials, or the OLAC system.' },
-  { target: 'folders', title: 'Folder Navigation', description: 'Use these folders to filter documents by category.' },
+  { target: 'folders', title: 'Folder Navigation', description: 'Browse documents by category. Restricted folders require a signed NDA — you\'ll be guided through that process automatically.' },
+  { target: 'doc-library', title: 'Document Library', description: 'Click any file to open it. Switch between list and grid view using the toggle in the top-right — grid mode shows PDF previews.' },
+  { target: 'view-toggle', title: 'List & Grid View', description: 'Toggle between list and grid layouts. Grid view renders live PDF thumbnails so you can visually scan documents at a glance.' },
+  { target: 'sol-panel', title: 'Sol AI Assistant', description: 'Ask Sol anything about Space Launch Technologies — financials, technology, the OLAC system, or any document in the data room.' },
   { target: 'pitchdeck-tab', title: 'Pitch Deck', description: 'View the Space Launch Technologies pitch deck directly from this tab.' },
 ];
 
 const EMPLOYEE_TUTORIAL_STEPS = [
-  { target: 'doc-library', title: 'Document Library', description: 'Browse and manage all project documents from here.' },
-  { target: 'upload-zone', title: 'Upload Documents', description: 'Drag and drop a PDF here — Sol reads it and automatically sorts it into the right folder.' },
-  { target: 'sol-panel', title: 'Sol AI Assistant', description: 'Ask Sol anything — sorting, summarising, research, and more.' },
-  { target: 'diligence-tab', title: 'Due Diligence', description: 'Track and manage the investor due diligence checklist. Sol auto-checks items when documents are uploaded.' },
+  { target: 'upload-zone', title: 'AI Auto-Sort Upload', description: 'Drop a PDF here and Sol reads it, picks the right folder, and files it automatically. Restricted documents are flagged too.' },
+  { target: 'view-toggle', title: 'List & Grid View', description: 'Switch between list and grid layouts. Grid renders live PDF thumbnails. Use the three-dot menu on any file to rename, download, or move to trash.' },
+  { target: 'folders', title: 'Drag & Drop', description: 'Drag any file or subfolder from the main area onto a sidebar folder to move it. You can also create new subfolders with the blue New Folder button.' },
+  { target: 'trash-nav', title: 'Recently Deleted', description: 'Deleted files land here — not gone forever. Restore them or permanently delete from this view.' },
+  { target: 'sol-panel', title: 'Sol AI Assistant', description: 'Ask Sol to find, summarise, or compare documents. Sol also auto-checks due diligence items when matching files are uploaded.' },
+  { target: 'diligence-tab', title: 'Due Diligence', description: 'Track the investor checklist here. Items are checked automatically as documents are uploaded and sorted.' },
 ];
 
 function useExoFont() {
@@ -77,8 +80,34 @@ function FileTypeIcon({ name, size = 28 }) {
   );
 }
 
+function SolDot({ taskToast }) {
+  const r = 5.5, cx = 9, cy = 9;
+  const circ = 2 * Math.PI * r;
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" style={{ flexShrink: 0 }}>
+      {!taskToast && <circle cx={cx} cy={cy} r="5" fill="#22c55e"/>}
+      {taskToast?.status === 'loading' && <>
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(34,197,94,0.2)" strokeWidth="2"/>
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#22c55e" strokeWidth="2"
+          strokeDasharray={`${circ * 0.65} ${circ * 0.35}`}
+          strokeLinecap="round"
+          style={{ transformOrigin: `${cx}px ${cy}px`, animation: 'spin 0.9s linear infinite' }}/>
+      </>}
+      {taskToast?.status === 'success' && <>
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#22c55e" strokeWidth="2"/>
+        <polyline points="5.5,9 7.5,11.5 12.5,6.5" fill="none" stroke="#22c55e" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+      </>}
+      {taskToast?.status === 'error' && <>
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#ef4444" strokeWidth="2"/>
+        <line x1="6.5" y1="6.5" x2="11.5" y2="11.5" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round"/>
+        <line x1="11.5" y1="6.5" x2="6.5" y2="11.5" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round"/>
+      </>}
+    </svg>
+  );
+}
+
 // Sol chat panel — used in both desktop right panel and center when Sol tab is active
-function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessage }) {
+function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessage, taskToast }) {
   const bottomRef = useRef(null)
 
   // Auto-scroll to bottom whenever messages change
@@ -90,7 +119,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div style={{ padding: '18px', borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#3b82f6' }}/>
+          <SolDot taskToast={taskToast} />
           <span style={{ fontSize: '15px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>SOL</span>
           <span style={{ fontSize: '13px', color: '#777', marginLeft: 'auto' }}>AI Assistant</span>
         </div>
@@ -206,6 +235,15 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const [expandedFolders, setExpandedFolders] = useState(new Set());
                             const [folderPaths, setFolderPaths] = useState([]);
                             const [newFolderName, setNewFolderName] = useState('');
+                            const [pitchDeckPages, setPitchDeckPages] = useState([]);
+                            const [pitchDeckLoading, setPitchDeckLoading] = useState(false);
+                            const [pitchDeckError, setPitchDeckError] = useState(null);
+                            const [folderOrder, setFolderOrder] = useState([]);
+                            const [reorderingFolder, setReorderingFolder] = useState(null);
+                            const [reorderDropTarget, setReorderDropTarget] = useState(null);
+                            const [taskToast, setTaskToast] = useState(null);
+                            const taskTimerRef = useRef(null);
+                            const [dragOverTrash, setDragOverTrash] = useState(false);
 
                             useEffect(() => {
                               async function init() {
@@ -224,6 +262,9 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 await loadDocuments();
                                 await loadDiligence();
                                 await loadUserRecents();
+                                const orderRes = await fetch('/api/folder-order');
+                                const orderData = await orderRes.json();
+                                if (orderData.order?.length) setFolderOrder(orderData.order);
                                 if (!profile.has_seen_tutorial) setShowTutorial(true);
                               }
                               init();
@@ -307,6 +348,53 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               return () => document.removeEventListener('click', handleClickOutside);
                             }, [openFolderMenu]);
 
+                            useEffect(() => {
+                              if (activeTab !== 'pitchdeck' || pitchDeckPages.length > 0 || pitchDeckLoading) return;
+                              async function loadPitchDeck() {
+                                setPitchDeckLoading(true);
+                                setPitchDeckError(null);
+                                try {
+                                  const { data: { session } } = await supabase.auth.getSession();
+                                  const res = await fetch('/api/documents', { headers: { authorization: `Bearer ${session.access_token}` } });
+                                  const result = await res.json();
+                                  const pitchDoc = result.documents?.find(d =>
+                                    d.path.includes('01_Pitch_and_Overview') &&
+                                    (d.name.toLowerCase().endsWith('.pdf') || d.mimeType === 'application/pdf')
+                                  );
+                                  if (!pitchDoc) { setPitchDeckError('no_file'); setPitchDeckLoading(false); return; }
+                                  const urlRes = await fetch('/api/documents/signed-url', {
+                                    method: 'POST',
+                                    headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ path: pitchDoc.path, fileName: pitchDoc.name })
+                                  });
+                                  const urlData = await urlRes.json();
+                                  if (!urlData.signedUrl) { setPitchDeckError('url_failed'); setPitchDeckLoading(false); return; }
+                                  const tryRender = async (retries = 8) => {
+                                    const pdfjs = window.pdfjsLib;
+                                    if (!pdfjs) {
+                                      if (retries > 0) { await new Promise(r => setTimeout(r, 600)); return tryRender(retries - 1); }
+                                      setPitchDeckError('pdfjs_unavailable'); setPitchDeckLoading(false); return;
+                                    }
+                                    pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                                    const pdf = await pdfjs.getDocument({ url: urlData.signedUrl, withCredentials: false }).promise;
+                                    for (let i = 1; i <= pdf.numPages; i++) {
+                                      const page = await pdf.getPage(i);
+                                      const viewport = page.getViewport({ scale: 1.5 });
+                                      const canvas = document.createElement('canvas');
+                                      canvas.width = viewport.width;
+                                      canvas.height = viewport.height;
+                                      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                                      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                                      setPitchDeckPages(prev => [...prev, dataUrl]);
+                                      if (i === 1) setPitchDeckLoading(false);
+                                    }
+                                  };
+                                  tryRender();
+                                } catch (e) { setPitchDeckError(e.message); setPitchDeckLoading(false); }
+                              }
+                              loadPitchDeck();
+                            }, [activeTab]);
+
                             async function loadDocuments() {
                               const { data: { session } } = await supabase.auth.getSession();
                               const response = await fetch('/api/documents', {
@@ -333,6 +421,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             }
 
                             async function moveToTrash(path, fileName) {
+                              taskStart('Moving to trash...');
                               const { data: { session } } = await supabase.auth.getSession();
                               await fetch('/api/trash', {
                                 method: 'POST',
@@ -340,9 +429,11 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 body: JSON.stringify({ path, fileName })
                               });
                               await loadDocuments();
+                              taskDone('Moved to trash');
                             }
 
                             async function restoreFromTrash(trashId) {
+                              taskStart('Restoring...');
                               const { data: { session } } = await supabase.auth.getSession();
                               await fetch('/api/trash/restore', {
                                 method: 'POST',
@@ -351,9 +442,11 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               });
                               await loadTrash();
                               await loadDocuments();
+                              taskDone('Restored');
                             }
 
                             async function deleteFromTrash(trashId) {
+                              taskStart('Deleting...');
                               const { data: { session } } = await supabase.auth.getSession();
                               await fetch('/api/trash/delete', {
                                 method: 'POST',
@@ -361,6 +454,38 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 body: JSON.stringify({ trashId })
                               });
                               await loadTrash();
+                              taskDone('Deleted');
+                            }
+
+                            async function restoreAllFromTrash() {
+                              if (trashItems.length === 0) return;
+                              taskStart('Restoring all...');
+                              const { data: { session } } = await supabase.auth.getSession();
+                              for (const item of trashItems) {
+                                await fetch('/api/trash/restore', {
+                                  method: 'POST',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ trashId: item.id })
+                                });
+                              }
+                              await loadTrash();
+                              await loadDocuments();
+                              taskDone('All restored');
+                            }
+
+                            async function deleteAllFromTrash() {
+                              if (trashItems.length === 0) return;
+                              taskStart('Deleting all...');
+                              const { data: { session } } = await supabase.auth.getSession();
+                              for (const item of trashItems) {
+                                await fetch('/api/trash/delete', {
+                                  method: 'POST',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ trashId: item.id })
+                                });
+                              }
+                              await loadTrash();
+                              taskDone('All deleted');
                             }
 
                             async function downloadDocument(path, fileName) {
@@ -382,15 +507,37 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             }
 
                             async function createFolder(parentFolderPath, folderName, isRestricted) {
+                              const folderPath = parentFolderPath ? `${parentFolderPath}/${folderName}` : folderName;
                               const { data: { session } } = await supabase.auth.getSession();
+                              taskStart('Creating folder...');
                               await fetch('/api/folders', {
                                 method: 'POST',
                                 headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ folderPath: `${parentFolderPath}/${folderName}`, isRestricted })
+                                body: JSON.stringify({ folderPath, isRestricted })
                               });
                               setCreatingFolderIn(null);
                               setNewFolderName('');
                               await loadDocuments();
+                              taskDone('Folder created');
+                            }
+
+                            async function saveFolderOrder(newOrder) {
+                              const { data: { session } } = await supabase.auth.getSession();
+                              await fetch('/api/folder-order', {
+                                method: 'POST',
+                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ order: newOrder })
+                              });
+                            }
+
+                            function taskStart(message) {
+                              if (taskTimerRef.current) clearTimeout(taskTimerRef.current);
+                              setTaskToast({ message, status: 'loading' });
+                            }
+                            function taskDone(message, status = 'success') {
+                              if (taskTimerRef.current) clearTimeout(taskTimerRef.current);
+                              setTaskToast({ message, status });
+                              taskTimerRef.current = setTimeout(() => setTaskToast(null), 2500);
                             }
 
                             async function loadUserRecents() {
@@ -439,6 +586,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               if (!uploadFile || !uploadFolder) return;
                               setUploadLoading(true);
                               setUploadMessage('');
+                              taskStart('Uploading file...');
                               const { data: { session } } = await supabase.auth.getSession();
                               const formData = new FormData();
                               formData.append('file', uploadFile);
@@ -452,11 +600,11 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               const result = await response.json();
                               if (result.error) {
                                 setUploadMessage('Error: ' + result.error);
+                                taskDone('Upload failed', 'error');
                               } else {
                                 setUploadMessage('File uploaded successfully.');
-                                setUploadFile(null);
-                                setUploadFolder('');
-                                setUploadRestricted(false);
+                                taskDone('File uploaded');
+                                setUploadFile(null); setUploadFolder(''); setUploadRestricted(false);
                                 await loadDocuments();
                               }
                               setUploadLoading(false);
@@ -478,6 +626,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               // Step 2: Sort with Sol
                               setDropStatus('sorting');
                               setDropStatusMessage('Sorting with Sol...');
+                              taskStart('Sorting with Sol...');
                               const sortForm = new FormData();
                               sortForm.append('file', file);
                               let sortResult;
@@ -491,12 +640,14 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               } catch {
                                 setDropStatus('error');
                                 setDropStatusMessage('Error contacting Sol. Please try again.');
+                                taskDone('Upload failed', 'error');
                                 setTimeout(() => { setDropStatus(''); setDropStatusMessage(''); }, 4000);
                                 return;
                               }
                               if (sortResult.error) {
                                 setDropStatus('error');
                                 setDropStatusMessage('Sort error: ' + sortResult.error);
+                                taskDone('Upload failed', 'error');
                                 setTimeout(() => { setDropStatus(''); setDropStatusMessage(''); }, 4000);
                                 return;
                               }
@@ -507,6 +658,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               // Step 3: Upload
                               setDropStatus('uploading');
                               setDropStatusMessage(`Uploading to ${folderLabel}...`);
+                              taskStart(`Uploading to ${folderLabel}...`);
                               const uploadForm = new FormData();
                               uploadForm.append('file', file);
                               uploadForm.append('folder', folder);
@@ -520,12 +672,14 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               if (uploadResult.error) {
                                 setDropStatus('error');
                                 setDropStatusMessage('Upload error: ' + uploadResult.error);
+                                taskDone('Upload failed', 'error');
                                 setTimeout(() => { setDropStatus(''); setDropStatusMessage(''); }, 4000);
                                 return;
                               }
 
                               setDropStatus('done');
                               setDropStatusMessage('Done.');
+                              taskDone('Upload complete');
                               await loadDocuments();
                               await loadDiligence();
                               setTimeout(() => { setDropStatus(''); setDropStatusMessage(''); }, 3000);
@@ -578,6 +732,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               const filename = parts[parts.length - 1];
                               const newPath = `${prefix}/${targetFolder}/${filename}`;
                               if (newPath === doc.path) return;
+                              taskStart('Moving file...');
                               setMovingDocPath(doc.path);
                               const { data: { session } } = await supabase.auth.getSession();
                               const response = await fetch('/api/documents/move', {
@@ -588,6 +743,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               const result = await response.json();
                               setMovingDocPath(null);
                               if (!result.error) await loadDocuments();
+                              taskDone(result.error ? 'Move failed' : 'File moved', result.error ? 'error' : 'success');
                             }
 
                             async function handleMoveFolder({ topFolder, sub }, targetFolder) {
@@ -597,6 +753,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 return p[1] === topFolder && p[2] === sub;
                               });
                               if (folderDocs.length === 0) return;
+                              taskStart('Moving folder...');
                               const { data: { session } } = await supabase.auth.getSession();
                               for (const doc of folderDocs) {
                                 const p = doc.path.split('/');
@@ -609,6 +766,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 });
                               }
                               await loadDocuments();
+                              taskDone('Folder moved');
                             }
 
                             async function handleRenameDoc(doc, newName) {
@@ -618,16 +776,28 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               const parts = doc.path.split('/');
                               parts[parts.length - 1] = trimmed;
                               const newPath = parts.join('/');
-                              setMovingDocPath(doc.path);
                               const { data: { session } } = await supabase.auth.getSession();
+                              taskStart('Renaming...');
                               const response = await fetch('/api/documents/move', {
                                 method: 'POST',
                                 headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ oldPath: doc.path, newPath })
                               });
                               const result = await response.json();
-                              setMovingDocPath(null);
-                              if (!result.error) await loadDocuments();
+                              if (!result.error) {
+                                setDocuments(prev => prev.map(d =>
+                                  d.path === doc.path ? { ...d, name: trimmed, path: newPath } : d
+                                ));
+                                setUserRecents(prev => {
+                                  if (!prev[doc.name]) return prev;
+                                  const next = { ...prev, [trimmed]: prev[doc.name] };
+                                  delete next[doc.name];
+                                  return next;
+                                });
+                                taskDone('Renamed');
+                              } else {
+                                taskDone('Rename failed', 'error');
+                              }
                             }
 
                             async function downloadFolder(topFolder, sub) {
@@ -661,6 +831,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             }
 
                             async function moveFolderToTrash(topFolder, sub) {
+                              taskStart('Moving folder to trash...');
                               const folderDocs = documents.filter(doc => {
                                 const p = doc.path.split('/');
                                 return p[1] === topFolder && p[2] === sub;
@@ -673,29 +844,67 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                   body: JSON.stringify({ path: doc.path, fileName: doc.name })
                                 });
                               }
+                              // Delete the .keep placeholder so the folder disappears
+                              const folderFullPath = folderPaths.find(fp => fp.includes(`/${topFolder}/${sub}`));
+                              if (folderFullPath) {
+                                await fetch('/api/folders', {
+                                  method: 'DELETE',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ keepPath: `${folderFullPath}/.keep` })
+                                });
+                              }
                               await loadDocuments();
+                              taskDone('Moved to trash');
                             }
 
                             async function renameFolder(topFolder, oldSub, newSub) {
                               const trimmed = newSub.trim();
                               setRenamingFolderPath(null);
                               if (!trimmed || trimmed === oldSub) return;
+                              taskStart('Renaming folder...');
+                              // Optimistic update
+                              setDocuments(prev => prev.map(d => {
+                                const p = d.path.split('/');
+                                if (p[1] === topFolder && p[2] === oldSub) { p[2] = trimmed; return { ...d, path: p.join('/') }; }
+                                return d;
+                              }));
+                              setFolderPaths(prev => prev.map(fp => {
+                                const parts = fp.split('/');
+                                if (parts.length >= 3 && parts[1] === topFolder && parts[2] === oldSub) { parts[2] = trimmed; return parts.join('/'); }
+                                return fp;
+                              }));
+                              if (activeFolder === `${topFolder}/${oldSub}`) setActiveFolder(`${topFolder}/${trimmed}`);
+                              // API calls (use original documents/folderPaths captured before state updates)
                               const folderDocs = documents.filter(doc => {
                                 const p = doc.path.split('/');
                                 return p[1] === topFolder && p[2] === oldSub;
                               });
+                              const folderFullPath = folderPaths.find(fp => fp.includes(`/${topFolder}/${oldSub}`));
                               const { data: { session } } = await supabase.auth.getSession();
                               for (const doc of folderDocs) {
                                 const p = doc.path.split('/');
                                 p[2] = trimmed;
-                                const newPath = p.join('/');
                                 await fetch('/api/documents/move', {
                                   method: 'POST',
                                   headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ oldPath: doc.path, newPath })
+                                  body: JSON.stringify({ oldPath: doc.path, newPath: p.join('/') })
                                 });
                               }
-                              await loadDocuments();
+                              // Move the .keep placeholder
+                              if (folderFullPath) {
+                                const isRestricted = folderFullPath.startsWith('restricted');
+                                await fetch('/api/folders', {
+                                  method: 'DELETE',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ keepPath: `${folderFullPath}/.keep` })
+                                });
+                                await fetch('/api/folders', {
+                                  method: 'POST',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ folderPath: `${topFolder}/${trimmed}`, isRestricted })
+                                });
+                              }
+                              taskDone('Folder renamed');
                             }
 
                             async function sendSolMessage() {
@@ -753,19 +962,12 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
   const isPostNda = profile.role === 'post_nda_investor' || profile.role === 'post_nda_employee';
   const isEmployee = profile.role === 'pre_nda_employee' || profile.role === 'post_nda_employee';
 
-  const folders = [
-  '00_START_HERE',
-  '01_Pitch_and_Overview',
-  '02_Market_Opportunity',
-  '03_Product_Technology',
-  '04_Traction',
-  '05_Financials',
-  '06_Legal',
-  '07_Team',
-  '08_Fundraising',
-  '09_Investor_Updates',
-  '10_Appendix'
-];
+  const FALLBACK_FOLDERS = ['00_START_HERE','01_Pitch_and_Overview','02_Market_Opportunity','03_Product_Technology','04_Traction','05_Financials','06_Legal','07_Team','08_Fundraising','09_Investor_Updates','10_Appendix'];
+  const allTopFolders = [...new Set(folderPaths.filter(fp => fp.split('/').length === 2).map(fp => fp.split('/')[1]))];
+  const baseFolders = [...new Set([...FALLBACK_FOLDERS, ...allTopFolders])];
+  const folders = folderOrder.length > 0
+    ? [...folderOrder.filter(f => baseFolders.includes(f)), ...baseFolders.filter(f => !folderOrder.includes(f))]
+    : baseFolders;
 
   // Build subfolder map from folderPaths (includes empty folders)
   // path format: general/01_Pitch_and_Overview/Executive Summary
@@ -903,11 +1105,11 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
               data-tutorial={item.id === 'diligence' ? 'diligence-tab' : item.id === 'pitchdeck' ? 'pitchdeck-tab' : undefined}
               style={{
                 width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
-                padding: '10px 16px', background: activeTab === item.id ? 'rgba(59,130,246,0.1)' : 'none',
-                border: 'none', borderLeft: activeTab === item.id ? '2px solid #3b82f6' : '2px solid transparent',
-                color: activeTab === item.id ? '#fff' : '#999', cursor: 'pointer',
+                padding: '10px 16px', background: (activeTab === item.id && !(item.id === 'documents' && activeFolder)) ? 'rgba(59,130,246,0.1)' : 'none',
+                border: 'none', borderLeft: (activeTab === item.id && !(item.id === 'documents' && activeFolder)) ? '2px solid #3b82f6' : '2px solid transparent',
+                color: (activeTab === item.id && !(item.id === 'documents' && activeFolder)) ? '#fff' : '#999', cursor: 'pointer',
                 fontSize: '15px', fontFamily: 'Exo 2, sans-serif',
-                fontWeight: activeTab === item.id ? '600' : '400',
+                fontWeight: (activeTab === item.id && !(item.id === 'documents' && activeFolder)) ? '600' : '400',
               }}
             >
               {item.icon}
@@ -927,15 +1129,39 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
               return (
                 <div key={folder}>
                   <div
+                    draggable={(isEmployee || isAdmin) && !draggingDoc && !draggingFolder}
+                    onDragStart={(e) => { if (!draggingDoc && !draggingFolder) { e.dataTransfer.effectAllowed = 'move'; setReorderingFolder(folder); } }}
+                    onDragEnd={() => { setReorderingFolder(null); setReorderDropTarget(null); }}
                     style={{
                       display: 'flex', alignItems: 'center',
                       background: dragOverFolder === folder ? 'rgba(59,130,246,0.12)' : isActive ? 'rgba(255,255,255,0.05)' : 'none',
                       borderLeft: dragOverFolder === folder ? '2px solid #3b82f6' : isActive ? '2px solid #3b82f6' : '2px solid transparent',
+                      borderTop: reorderDropTarget === folder ? '2px solid #3b82f6' : '2px solid transparent',
                       transition: 'background 0.1s',
+                      opacity: reorderingFolder === folder ? 0.4 : 1,
                     }}
-                    onDragOver={(e) => { if (draggingDoc || draggingFolder) { e.preventDefault(); setDragOverFolder(folder); } }}
-                    onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); }}
-                    onDrop={(e) => { e.preventDefault(); setDragOverFolder(null); if (draggingDoc) handleMoveDoc(draggingDoc, folder); if (draggingFolder) handleMoveFolder(draggingFolder, folder); }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      if (reorderingFolder && reorderingFolder !== folder) { setReorderDropTarget(folder); }
+                      else if (draggingDoc || draggingFolder) { setDragOverFolder(folder); }
+                    }}
+                    onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) { setDragOverFolder(null); setReorderDropTarget(null); } }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (reorderingFolder && reorderingFolder !== folder) {
+                        const newOrder = [...folders];
+                        const fromIdx = newOrder.indexOf(reorderingFolder);
+                        const toIdx = newOrder.indexOf(folder);
+                        if (fromIdx !== -1 && toIdx !== -1) { newOrder.splice(fromIdx, 1); newOrder.splice(toIdx, 0, reorderingFolder); }
+                        setFolderOrder(newOrder);
+                        saveFolderOrder(newOrder);
+                      } else {
+                        setDragOverFolder(null);
+                        if (draggingDoc) handleMoveDoc(draggingDoc, folder);
+                        if (draggingFolder) handleMoveFolder(draggingFolder, folder);
+                      }
+                      setReorderingFolder(null); setReorderDropTarget(null);
+                    }}
                   >
                     <button
                       onClick={() => { setActiveFolder(folder); setActiveTab('documents'); }}
@@ -944,7 +1170,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                         padding: '9px 8px 9px 14px',
                         background: 'none', border: 'none',
                         color: dragOverFolder === folder ? '#3b82f6' : isActive ? '#fff' : '#888',
-                        cursor: 'pointer', fontSize: '14px', fontFamily: 'Exo 2, sans-serif', textAlign: 'left',
+                        cursor: 'pointer',
+                        fontSize: '14px', fontFamily: 'Exo 2, sans-serif', textAlign: 'left',
                         fontWeight: isActive ? '600' : '400',
                         transition: 'color 0.1s',
                       }}
@@ -994,15 +1221,31 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
               <>
                 <div style={{ margin: '10px 16px 6px', borderTop: '1px solid rgba(255,255,255,0.05)' }} />
                 <button
+                  data-tutorial="trash-nav"
                   onClick={() => { setActiveFolder('__trash__'); setActiveTab('documents'); loadTrash(); }}
+                  onDragOver={(e) => { if (draggingDoc || draggingFolder) { e.preventDefault(); setDragOverTrash(true); } }}
+                  onDragLeave={() => setDragOverTrash(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDragOverTrash(false);
+                    if (draggingDoc) {
+                      moveToTrash(draggingDoc.path, draggingDoc.name);
+                      setDraggingDoc(null);
+                    } else if (draggingFolder) {
+                      moveFolderToTrash(draggingFolder.topFolder, draggingFolder.sub);
+                      setDraggingFolder(null);
+                    }
+                    setDragOverFolder(null);
+                  }}
                   style={{
                     width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
                     padding: '9px 16px',
-                    background: activeFolder === '__trash__' ? 'rgba(255,255,255,0.05)' : 'none',
+                    background: dragOverTrash ? 'rgba(239,68,68,0.12)' : activeFolder === '__trash__' ? 'rgba(255,255,255,0.05)' : 'none',
                     border: 'none',
-                    borderLeft: activeFolder === '__trash__' ? '2px solid #ef4444' : '2px solid transparent',
-                    color: activeFolder === '__trash__' ? '#ef4444' : '#666',
+                    borderLeft: dragOverTrash ? '2px solid #ef4444' : activeFolder === '__trash__' ? '2px solid #ef4444' : '2px solid transparent',
+                    color: dragOverTrash ? '#ef4444' : activeFolder === '__trash__' ? '#ef4444' : '#666',
                     cursor: 'pointer', fontSize: '14px', fontFamily: 'Exo 2, sans-serif', textAlign: 'left',
+                    transition: 'background 0.1s, color 0.1s',
                   }}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -1035,9 +1278,17 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
           {/* Documents tab */}
           {activeTab === 'documents' && activeFolder === '__trash__' && (
             <div>
-              <div style={{ marginBottom: '28px' }}>
-                <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', marginBottom: '6px' }}>RECENTLY DELETED</h1>
-                <p style={{ fontSize: '14px', color: '#777' }}>Files are permanently deleted 30 days after being moved here.</p>
+              <div style={{ marginBottom: '28px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                <div>
+                  <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', marginBottom: '6px' }}>RECENTLY DELETED</h1>
+                  <p style={{ fontSize: '14px', color: '#777' }}>Files are permanently deleted 30 days after being moved here.</p>
+                </div>
+                {trashItems.length > 0 && (
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '4px', flexShrink: 0 }}>
+                    <button onClick={() => restoreAllFromTrash()} style={{ padding: '7px 14px', background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '6px', color: '#93c5fd', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Recover all</button>
+                    <button onClick={() => { if (confirm('Permanently delete all items in trash?')) deleteAllFromTrash(); }} style={{ padding: '7px 14px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: '6px', color: '#f87171', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Delete all</button>
+                  </div>
+                )}
               </div>
               {trashLoading ? (
                 <p style={{ fontSize: '14px', color: '#555', fontFamily: 'Exo 2, sans-serif' }}>Loading...</p>
@@ -1077,19 +1328,30 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                   <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', marginBottom: '6px' }}>
                     {activeFolder ? activeFolder.split('/').map(p => p.replace(/_/g, ' ').replace(/^\d+\s+/, '')).join(' / ') : 'DOCUMENT LIBRARY'}
                   </h1>
-                  <p style={{ fontSize: '14px', color: '#777' }}>
-                    {activeFolder
-                      ? `Showing files in ${activeFolder.split('/').map(p => p.replace(/_/g, ' ').replace(/^\d+\s+/, '')).join(' / ')}`
-                      : (isPostNda || isAdmin ? 'Full access — all documents unlocked' : 'Pre-NDA access — patent and white paper locked')}
-                  </p>
                 </div>
-                <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
-                  <button onClick={() => setDocView('list')} title="List view" style={{ padding: '7px 10px', background: docView === 'list' ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.04)', border: docView === 'list' ? '1px solid rgba(59,130,246,0.4)' : '1px solid rgba(255,255,255,0.08)', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={docView === 'list' ? '#93c5fd' : '#666'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-                  </button>
-                  <button onClick={() => setDocView('grid')} title="Grid view" style={{ padding: '7px 10px', background: docView === 'grid' ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.04)', border: docView === 'grid' ? '1px solid rgba(59,130,246,0.4)' : '1px solid rgba(255,255,255,0.08)', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={docView === 'grid' ? '#93c5fd' : '#666'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-                  </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                  {!activeFolder && (isEmployee || isAdmin) && (
+                    creatingFolderIn === '__root__' ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <input autoFocus value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && newFolderName.trim()) createFolder(null, newFolderName.trim(), false); if (e.key === 'Escape') { setCreatingFolderIn(null); setNewFolderName(''); } }} placeholder="Folder name..." style={{ padding: '7px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '180px' }} />
+                        <button onClick={() => { if (newFolderName.trim()) createFolder(null, newFolderName.trim(), false); }} style={{ padding: '7px 14px', background: '#3b82f6', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Create</button>
+                        <button onClick={() => { setCreatingFolderIn(null); setNewFolderName(''); }} style={{ padding: '7px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#777', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Cancel</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setCreatingFolderIn('__root__')} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.35)', borderRadius: '6px', color: '#93c5fd', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        New folder
+                      </button>
+                    )
+                  )}
+                  <div data-tutorial="view-toggle" style={{ display: 'flex', gap: '4px' }}>
+                    <button onClick={() => setDocView('list')} title="List view" style={{ padding: '7px 10px', background: docView === 'list' ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.04)', border: docView === 'list' ? '1px solid rgba(59,130,246,0.4)' : '1px solid rgba(255,255,255,0.08)', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={docView === 'list' ? '#93c5fd' : '#666'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                    </button>
+                    <button onClick={() => setDocView('grid')} title="Grid view" style={{ padding: '7px 10px', background: docView === 'grid' ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.04)', border: docView === 'grid' ? '1px solid rgba(59,130,246,0.4)' : '1px solid rgba(255,255,255,0.08)', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={docView === 'grid' ? '#93c5fd' : '#666'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1610,47 +1872,65 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
                   {Object.entries(groupedDocs).map(([folder, files]) => (
                     <div key={folder}>
-                      <p style={{ fontSize: '12px', color: '#777', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', marginBottom: '10px' }}>
-                        {folder.split(' / ').pop().replace(/_/g, ' ').replace(/^\d+\s+/, '').toUpperCase()}
-                      </p>
                       {docView === 'list' ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                            <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>NAME</span>
+                            <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>LAST OPENED</span>
+                            <span />
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                           {files.map(doc => {
                             const isMoving = movingDocPath === doc.path;
                             const isRenaming = renamingDocPath === doc.path;
                             const canEdit = isEmployee || isAdmin;
                             const isLocked = doc.restricted && !isPostNda && !isAdmin;
+                            const lastOpened = userRecents[doc.name];
                             return (
                               <div
                                 key={doc.path}
                                 draggable={canEdit && !isMoving && !isRenaming}
                                 onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingDoc(doc); }}
                                 onDragEnd={() => { setDraggingDoc(null); setDragOverFolder(null); }}
-                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', background: isMoving ? 'rgba(59,130,246,0.06)' : 'rgba(255,255,255,0.02)', border: `1px solid ${isMoving ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)'}`, borderRadius: '6px', opacity: isMoving ? 0.6 : 1, cursor: isMoving ? 'default' : 'pointer', transition: 'opacity 0.15s' }}
+                                style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: isMoving ? 'rgba(59,130,246,0.06)' : 'rgba(255,255,255,0.02)', border: `1px solid ${isMoving ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)'}`, borderRadius: '6px', opacity: isMoving ? 0.6 : 1, cursor: isMoving ? 'default' : 'pointer', transition: 'opacity 0.15s' }}
                               >
-                                <div onClick={() => !isRenaming && openDocument(doc.path, doc.name)} style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
-                                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                                  {isRenaming ? (
-                                    <input autoFocus value={renameValue} onChange={(e) => setRenameValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleRenameDoc(doc, renameValue); if (e.key === 'Escape') setRenamingDocPath(null); }} onBlur={() => setRenamingDocPath(null)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '15px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} />
+                                <div onClick={() => !isRenaming && openDocument(doc.path, doc.name)} style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+                                  {isLocked ? (
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                                   ) : (
-                                    <span style={{ fontSize: '15px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</span>
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                  )}
+                                  {isRenaming ? (
+                                    <input autoFocus value={renameValue} onChange={(e) => setRenameValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleRenameDoc(doc, renameValue); if (e.key === 'Escape') setRenamingDocPath(null); }} onBlur={() => setRenamingDocPath(null)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} />
+                                  ) : (
+                                    <span style={{ fontSize: '14px', fontWeight: '500', color: isLocked ? '#555' : '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</span>
                                   )}
                                   {doc.restricted && !isRenaming && <span style={{ fontSize: '11px', padding: '2px 7px', background: 'rgba(59,130,246,0.1)', color: '#3b82f6', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', flexShrink: 0 }}>POST-NDA</span>}
                                 </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0, marginLeft: '12px' }}>
-                                  {isMoving ? (
-                                    <span style={{ fontSize: '13px', color: '#3b82f6', fontFamily: 'Exo 2, sans-serif' }}>Moving...</span>
-                                  ) : isRenaming ? null : (
-                                    <>
-                                      {canEdit && !isLocked && <button onClick={(e) => { e.stopPropagation(); setRenamingDocPath(doc.path); setRenameValue(doc.name); }} style={{ fontSize: '13px', color: '#555', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif' }}>Rename</button>}
-                                      <button onClick={(e) => { e.stopPropagation(); openDocument(doc.path, doc.name); }} style={{ fontSize: '13px', color: '#3b82f6', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif' }}>Open →</button>
-                                    </>
+                                <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>
+                                  {isMoving ? <span style={{ color: '#3b82f6' }}>Moving...</span> : lastOpened ? `${new Date(lastOpened).toLocaleDateString(undefined, { day: '2-digit', month: 'short' })} ${new Date(lastOpened).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}` : '—'}
+                                </span>
+                                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                  {!isMoving && !isRenaming && (
+                                    <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+                                      <button onClick={(e) => { e.stopPropagation(); setOpenMenuPath(openMenuPath === doc.path ? null : doc.path); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 8px', borderRadius: '4px', fontSize: '18px', lineHeight: 1, fontFamily: 'monospace' }}>⋮</button>
+                                      {openMenuPath === doc.path && (
+                                        <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', right: 0, top: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+                                          {!isLocked && <button onClick={() => { setOpenMenuPath(null); openDocument(doc.path, doc.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>}
+                                          {isLocked && <button onClick={() => { setOpenMenuPath(null); openDocument(doc.path, doc.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#555', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>NDA required</button>}
+                                          {!isLocked && <button onClick={() => { setOpenMenuPath(null); downloadDocument(doc.path, doc.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Download</button>}
+                                          {canEdit && !isLocked && <button onClick={() => { setOpenMenuPath(null); setRenamingDocPath(doc.path); setRenameValue(doc.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>}
+                                          {canEdit && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenMenuPath(null); if (confirm(`Move "${doc.name}" to trash?`)) moveToTrash(doc.path, doc.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Move to trash</button></>}
+                                        </div>
+                                      )}
+                                    </div>
                                   )}
                                 </div>
                               </div>
                             );
                           })}
-                        </div>
+                          </div>
+                        </>
                       ) : (
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '12px' }}>
                           {files.map(doc => {
@@ -1740,6 +2020,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
   solLoading={solLoading}
   setSolInput={setSolInput}
   sendSolMessage={sendSolMessage}
+  taskToast={taskToast}
   />
   </div>
 )}
@@ -1819,14 +2100,37 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
             <div>
               <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', marginBottom: '6px' }}>PITCH DECK</h1>
               <p style={{ fontSize: '14px', color: '#777', marginBottom: '28px' }}>Space Launch Technologies — Series A</p>
-              <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', padding: '72px', textAlign: 'center' }}>
-                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: '16px' }}>
-                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-                  <line x1="8" y1="21" x2="16" y2="21"/>
-                  <line x1="12" y1="17" x2="12" y2="21"/>
-                </svg>
-                <p style={{ fontSize: '15px', color: '#666' }}>Pitch deck will appear here once uploaded by the administrator.</p>
-              </div>
+              {pitchDeckLoading && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '80px', color: '#555' }}>
+                  <div style={{ width: '28px', height: '28px', border: '2px solid #333', borderTop: '2px solid #888', borderRadius: '50%', animation: 'spin 0.8s linear infinite', marginBottom: '16px' }} />
+                  <p style={{ fontSize: '14px' }}>Loading pitch deck...</p>
+                </div>
+              )}
+              {!pitchDeckLoading && pitchDeckError === 'no_file' && (
+                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', padding: '72px', textAlign: 'center' }}>
+                  <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: '16px' }}>
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                    <line x1="8" y1="21" x2="16" y2="21"/>
+                    <line x1="12" y1="17" x2="12" y2="21"/>
+                  </svg>
+                  <p style={{ fontSize: '15px', color: '#666' }}>{isAdmin ? 'Upload the pitch deck PDF to the 01_Pitch_and_Overview folder to display it here.' : 'Pitch deck will appear here once uploaded by the administrator.'}</p>
+                </div>
+              )}
+              {!pitchDeckLoading && pitchDeckError && pitchDeckError !== 'no_file' && (
+                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', padding: '40px', textAlign: 'center' }}>
+                  <p style={{ fontSize: '14px', color: '#666' }}>Could not load pitch deck. Please try refreshing.</p>
+                </div>
+              )}
+              {!pitchDeckLoading && pitchDeckPages.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                  {pitchDeckPages.map((src, i) => (
+                    <div key={i} style={{ width: '100%', position: 'relative' }}>
+                      <img src={src} alt={`Slide ${i + 1}`} style={{ width: '100%', display: 'block', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.06)' }} />
+                      <div style={{ position: 'absolute', bottom: '10px', right: '14px', fontSize: '11px', color: 'rgba(255,255,255,0.3)', fontFamily: 'monospace' }}>{i + 1} / {pitchDeckPages.length}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -1959,6 +2263,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
   solLoading={solLoading}
   setSolInput={setSolInput}
   sendSolMessage={sendSolMessage}
+  taskToast={taskToast}
 />
   </div>
 )}
@@ -1970,7 +2275,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
         <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, height: '70vh', background: '#0f0f0f', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', zIndex: 100 }}>
           <div style={{ padding: '14px 18px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#3b82f6' }}/>
+              <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#22c55e' }}/>
               <span style={{ fontSize: '15px', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>SOL</span>
             </div>
             <button onClick={() => setSolDrawerOpen(false)} style={{ background: 'none', border: 'none', color: '#777', cursor: 'pointer', fontSize: '20px' }}>×</button>
@@ -2084,6 +2389,10 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
       })()}
 
       <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
         @keyframes bounce {
           0%, 80%, 100% { transform: translateY(0); }
           40% { transform: translateY(-4px); }
