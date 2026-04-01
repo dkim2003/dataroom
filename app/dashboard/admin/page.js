@@ -56,6 +56,26 @@ export default function AdminPage() {
     else setProfiles(data)
   }
 
+  async function approveUser(profile) {
+    setMessage('Approving...')
+    const { data: { session } } = await supabase.auth.getSession()
+    const res = await fetch('/api/admin/approve', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: profile.id, email: profile.email, fullName: profile.full_name })
+    })
+    const result = await res.json()
+    if (result.error) {
+      setMessage('Error: ' + result.error)
+    } else if (result.emailSent === false) {
+      setMessage(`Approved — but approval email failed to send (${result.emailError}). Check RESEND_API_KEY.`)
+      await fetchProfiles()
+    } else {
+      setMessage(`Approved — confirmation email sent to ${profile.email}.`)
+      await fetchProfiles()
+    }
+  }
+
   async function updateStatus(id, status) {
     const { error } = await supabase
       .from('profiles')
@@ -191,7 +211,7 @@ export default function AdminPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               {renderRoleDropdown(profile)}
               <button
-                onClick={() => updateStatus(profile.id, 'approved')}
+                onClick={() => approveUser(profile)}
                 style={{ padding: '7px 16px', background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: '6px', color: '#22c55e', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}
               >
                 Approve
@@ -252,7 +272,7 @@ export default function AdminPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               {renderRoleDropdown(profile)}
               <button
-                onClick={() => updateStatus(profile.id, 'approved')}
+                onClick={() => approveUser(profile)}
                 style={{ padding: '7px 16px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#888', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}
               >
                 Re-approve
