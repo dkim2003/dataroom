@@ -233,6 +233,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const [trashLoading, setTrashLoading] = useState(false);
                             const [creatingFolderIn, setCreatingFolderIn] = useState(null);
                             const [expandedFolders, setExpandedFolders] = useState(new Set());
+                            const [foldersGroupOpen, setFoldersGroupOpen] = useState(false);
+                            const [internalGroupOpen, setInternalGroupOpen] = useState(false);
                             const [folderPaths, setFolderPaths] = useState([]);
                             const [newFolderName, setNewFolderName] = useState('');
                             const [pitchDeckPages, setPitchDeckPages] = useState([]);
@@ -1011,6 +1013,10 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
     ? [...folderOrder.filter(f => baseFolders.includes(f)), ...baseFolders.filter(f => !folderOrder.includes(f))]
     : baseFolders;
 
+  const internalFolderNames = new Set(folderPaths.filter(fp => fp.startsWith('internal/')).map(fp => fp.split('/')[1]));
+  const publicFolders = folders.filter(f => !internalFolderNames.has(f));
+  const internalFolders = folders.filter(f => internalFolderNames.has(f));
+
   // Build subfolder map from folderPaths (includes empty folders)
   // path format: general/01_Pitch_and_Overview/Executive Summary
   const subfolderMap = {};
@@ -1160,11 +1166,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
           ))}
 
           {/* Folders */}
-          <div data-tutorial="folders" style={{ marginTop: '24px' }}>
-            <div style={{ padding: '0 16px', marginBottom: '8px' }}>
-              <p style={{ fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em' }}>FOLDERS</p>
-            </div>
-            {folders.map(folder => {
+          {(() => {
+            const renderFolderItem = (folder, iconColor) => {
               const isActive = activeFolder === folder && activeTab === 'documents';
               const isExpanded = expandedFolders.has(folder);
               const subs = subfolderMap[folder] ? [...subfolderMap[folder]].sort() : [];
@@ -1211,16 +1214,25 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                         flex: 1, display: 'flex', alignItems: 'center', gap: '10px',
                         padding: '9px 8px 9px 14px',
                         background: 'none', border: 'none',
-                        color: dragOverFolder === folder ? '#3b82f6' : isActive ? '#fff' : '#888',
+                        color: dragOverFolder === folder ? '#3b82f6' : isActive ? '#fff' : iconColor,
                         cursor: 'pointer',
                         fontSize: '14px', fontFamily: 'Exo 2, sans-serif', textAlign: 'left',
                         fontWeight: isActive ? '600' : '400',
                         transition: 'color 0.1s',
                       }}
                     >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-                      </svg>
+                      {iconColor === '#fb923c' ? (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={dragOverFolder === folder ? '#3b82f6' : isActive ? '#fff' : iconColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/>
+                          <path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/>
+                          <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/>
+                          <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>
+                        </svg>
+                      ) : (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={dragOverFolder === folder ? '#3b82f6' : isActive ? '#fff' : iconColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                        </svg>
+                      )}
                       {folder.replace(/_/g, ' ').replace(/^\d+\s+/, '')}
                     </button>
                     {subs.length > 0 && (
@@ -1249,7 +1261,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                           transition: 'background 0.1s, color 0.1s',
                         }}
                       >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
                         </svg>
                         {sub.replace(/^\d+\s+/, '')}
@@ -1258,49 +1270,73 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                   })}
                 </div>
               );
-            })}
-            {(isEmployee || isAdmin) && (
-              <>
-                <div style={{ margin: '10px 16px 6px', borderTop: '1px solid rgba(255,255,255,0.05)' }} />
-                <button
-                  data-tutorial="trash-nav"
-                  onClick={() => { setActiveFolder('__trash__'); setActiveTab('documents'); loadTrash(); }}
-                  onDragOver={(e) => { if (draggingDoc || draggingFolder || reorderingFolder) { e.preventDefault(); setDragOverTrash(true); } }}
-                  onDragLeave={() => setDragOverTrash(false)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setDragOverTrash(false);
-                    if (draggingDoc) {
-                      moveToTrash(draggingDoc.path, draggingDoc.name);
-                      setDraggingDoc(null);
-                    } else if (draggingFolder) {
-                      moveFolderToTrash(draggingFolder.topFolder, draggingFolder.sub);
-                      setDraggingFolder(null);
-                    } else if (reorderingFolder) {
-                      moveTopFolderToTrash(reorderingFolder);
-                      setReorderingFolder(null);
-                    }
-                    setDragOverFolder(null);
-                  }}
-                  style={{
-                    width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
-                    padding: '9px 16px',
-                    background: dragOverTrash ? 'rgba(239,68,68,0.12)' : activeFolder === '__trash__' ? 'rgba(255,255,255,0.05)' : 'none',
-                    border: 'none',
-                    borderLeft: dragOverTrash ? '2px solid #ef4444' : activeFolder === '__trash__' ? '2px solid #ef4444' : '2px solid transparent',
-                    color: dragOverTrash ? '#ef4444' : activeFolder === '__trash__' ? '#ef4444' : '#666',
-                    cursor: 'pointer', fontSize: '14px', fontFamily: 'Exo 2, sans-serif', textAlign: 'left',
-                    transition: 'background 0.1s, color 0.1s',
-                  }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-                  </svg>
-                  Recently Deleted
-                </button>
-              </>
-            )}
-          </div>
+            };
+
+            const groupHeader = (label, isOpen, toggle, accent) => (
+              <button
+                onClick={toggle}
+                style={{
+                  width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '0 16px', marginBottom: '6px', background: 'none', border: 'none', cursor: 'pointer',
+                }}
+              >
+                <p style={{ fontSize: '11px', fontWeight: '600', color: accent || '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', margin: 0 }}>{label}</p>
+                <span style={{ fontSize: '18px', color: accent || '#555', transition: 'transform 0.2s', display: 'inline-flex', alignItems: 'center', lineHeight: 1, transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>›</span>
+              </button>
+            );
+
+            return (
+              <div data-tutorial="folders" style={{ marginTop: '24px' }}>
+                {/* Public folders group */}
+                {groupHeader('FOLDERS', foldersGroupOpen, () => setFoldersGroupOpen(o => !o), '#555')}
+                {foldersGroupOpen && publicFolders.map(f => renderFolderItem(f, '#888'))}
+
+                {/* Internal folders group — employees/admins only */}
+                {(isEmployee || isAdmin) && (
+                  <div style={{ marginTop: '16px' }}>
+                    {groupHeader('INTERNAL', internalGroupOpen, () => setInternalGroupOpen(o => !o), '#fb923c')}
+                    {internalGroupOpen && internalFolders.map(f => renderFolderItem(f, '#fb923c'))}
+                  </div>
+                )}
+
+                {/* Recently Deleted */}
+                {(isEmployee || isAdmin) && (
+                  <>
+                    <div style={{ margin: '10px 16px 6px', borderTop: '1px solid rgba(255,255,255,0.05)' }} />
+                    <button
+                      data-tutorial="trash-nav"
+                      onClick={() => { setActiveFolder('__trash__'); setActiveTab('documents'); loadTrash(); }}
+                      onDragOver={(e) => { if (draggingDoc || draggingFolder || reorderingFolder) { e.preventDefault(); setDragOverTrash(true); } }}
+                      onDragLeave={() => setDragOverTrash(false)}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        setDragOverTrash(false);
+                        if (draggingDoc) { moveToTrash(draggingDoc.path, draggingDoc.name); setDraggingDoc(null); }
+                        else if (draggingFolder) { moveFolderToTrash(draggingFolder.topFolder, draggingFolder.sub); setDraggingFolder(null); }
+                        else if (reorderingFolder) { moveTopFolderToTrash(reorderingFolder); setReorderingFolder(null); }
+                        setDragOverFolder(null);
+                      }}
+                      style={{
+                        width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
+                        padding: '9px 16px',
+                        background: dragOverTrash ? 'rgba(239,68,68,0.12)' : activeFolder === '__trash__' ? 'rgba(255,255,255,0.05)' : 'none',
+                        border: 'none',
+                        borderLeft: dragOverTrash ? '2px solid #ef4444' : activeFolder === '__trash__' ? '2px solid #ef4444' : '2px solid transparent',
+                        color: dragOverTrash ? '#ef4444' : activeFolder === '__trash__' ? '#ef4444' : '#666',
+                        cursor: 'pointer', fontSize: '14px', fontFamily: 'Exo 2, sans-serif', textAlign: 'left',
+                        transition: 'background 0.1s, color 0.1s',
+                      }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                      </svg>
+                      Recently Deleted
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })()}
 
         </div>
 
