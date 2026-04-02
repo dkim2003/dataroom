@@ -233,8 +233,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const [trashLoading, setTrashLoading] = useState(false);
                             const [creatingFolderIn, setCreatingFolderIn] = useState(null);
                             const [expandedFolders, setExpandedFolders] = useState(new Set());
-                            const [foldersGroupOpen, setFoldersGroupOpen] = useState(false);
-                            const [internalGroupOpen, setInternalGroupOpen] = useState(false);
+                            const [foldersGroupOpen, setFoldersGroupOpen] = useState(true);
+                            const [internalGroupOpen, setInternalGroupOpen] = useState(true);
                             const [folderPaths, setFolderPaths] = useState([]);
                             const [newFolderName, setNewFolderName] = useState('');
                             const [pitchDeckPages, setPitchDeckPages] = useState([]);
