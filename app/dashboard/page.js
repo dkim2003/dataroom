@@ -244,9 +244,20 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const [taskToast, setTaskToast] = useState(null);
                             const taskTimerRef = useRef(null);
                             const [dragOverTrash, setDragOverTrash] = useState(false);
+                            const [newFolderAccess, setNewFolderAccess] = useState('public');
 
                             useEffect(() => {
                               async function init() {
+                                // Detect magic link arrival via URL hash — mark email as verified
+                                if (typeof window !== 'undefined' && window.location.hash.includes('type=magiclink')) {
+                                  const { data: { session } } = await supabase.auth.getSession();
+                                  if (session) {
+                                    await fetch('/api/verify-email', { method: 'POST', headers: { authorization: `Bearer ${session.access_token}` } });
+                                  }
+                                  // Clean up hash from URL
+                                  window.history.replaceState(null, '', window.location.pathname);
+                                }
+
                                 const { data: { user } } = await supabase.auth.getUser();
                                 if (!user) { router.push('/login'); return; }
                                 const { data: profile } = await supabase
@@ -506,14 +517,14 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               }
                             }
 
-                            async function createFolder(parentFolderPath, folderName, isRestricted) {
+                            async function createFolder(parentFolderPath, folderName, isRestricted, isInternal = false) {
                               const folderPath = parentFolderPath ? `${parentFolderPath}/${folderName}` : folderName;
                               const { data: { session } } = await supabase.auth.getSession();
                               taskStart('Creating folder...');
                               await fetch('/api/folders', {
                                 method: 'POST',
                                 headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ folderPath, isRestricted })
+                                body: JSON.stringify({ folderPath, isRestricted, isInternal })
                               });
                               setCreatingFolderIn(null);
                               setNewFolderName('');
@@ -857,6 +868,37 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               taskDone('Moved to trash');
                             }
 
+                            async function moveTopFolderToTrash(folderName) {
+                              taskStart('Moving folder to trash...');
+                              const folderDocs = documents.filter(doc => doc.path.split('/')[1] === folderName);
+                              const { data: { session } } = await supabase.auth.getSession();
+                              for (const doc of folderDocs) {
+                                await fetch('/api/trash', {
+                                  method: 'POST',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ path: doc.path, fileName: doc.name })
+                                });
+                              }
+                              // Delete all .keep placeholders for this top-level folder and its subfolders
+                              const keepPaths = folderPaths.filter(fp => fp.split('/')[1] === folderName);
+                              for (const fp of keepPaths) {
+                                await fetch('/api/folders', {
+                                  method: 'DELETE',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ keepPath: `${fp}/.keep` })
+                                });
+                              }
+                              // Remove from folder order
+                              const newOrder = folderOrder.filter(f => f !== folderName);
+                              setFolderOrder(newOrder);
+                              await saveFolderOrder(newOrder);
+                              if (activeFolder === folderName || activeFolder?.startsWith(folderName + '/')) {
+                                setActiveFolder(null);
+                              }
+                              await loadDocuments();
+                              taskDone('Folder moved to trash');
+                            }
+
                             async function renameFolder(topFolder, oldSub, newSub) {
                               const trimmed = newSub.trim();
                               setRenamingFolderPath(null);
@@ -958,7 +1000,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
     );
   }
 
-  const isAdmin = user.email === ADMIN_EMAIL;
+  const isAdmin = user.email === ADMIN_EMAIL || profile.is_admin === true;
   const isPostNda = profile.role === 'post_nda_investor' || profile.role === 'post_nda_employee';
   const isEmployee = profile.role === 'pre_nda_employee' || profile.role === 'post_nda_employee';
 
@@ -1223,7 +1265,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                 <button
                   data-tutorial="trash-nav"
                   onClick={() => { setActiveFolder('__trash__'); setActiveTab('documents'); loadTrash(); }}
-                  onDragOver={(e) => { if (draggingDoc || draggingFolder) { e.preventDefault(); setDragOverTrash(true); } }}
+                  onDragOver={(e) => { if (draggingDoc || draggingFolder || reorderingFolder) { e.preventDefault(); setDragOverTrash(true); } }}
                   onDragLeave={() => setDragOverTrash(false)}
                   onDrop={(e) => {
                     e.preventDefault();
@@ -1234,6 +1276,9 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     } else if (draggingFolder) {
                       moveFolderToTrash(draggingFolder.topFolder, draggingFolder.sub);
                       setDraggingFolder(null);
+                    } else if (reorderingFolder) {
+                      moveTopFolderToTrash(reorderingFolder);
+                      setReorderingFolder(null);
                     }
                     setDragOverFolder(null);
                   }}
@@ -1257,19 +1302,6 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
             )}
           </div>
 
-          {/* Admin */}
-          {isAdmin && (
-            <div style={{ padding: '24px 16px 0' }}>
-              <p style={{ fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', marginBottom: '8px' }}>ADMIN</p>
-              <button
-                onClick={() => setShowUpload(!showUpload)}
-                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 0', background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '15px', fontFamily: 'Exo 2, sans-serif', textAlign: 'left' }}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                Upload file
-              </button>
-            </div>
-          )}
         </div>
 
         {/* Main content */}
@@ -1330,20 +1362,6 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                   </h1>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-                  {!activeFolder && (isEmployee || isAdmin) && (
-                    creatingFolderIn === '__root__' ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <input autoFocus value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && newFolderName.trim()) createFolder(null, newFolderName.trim(), false); if (e.key === 'Escape') { setCreatingFolderIn(null); setNewFolderName(''); } }} placeholder="Folder name..." style={{ padding: '7px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '180px' }} />
-                        <button onClick={() => { if (newFolderName.trim()) createFolder(null, newFolderName.trim(), false); }} style={{ padding: '7px 14px', background: '#3b82f6', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Create</button>
-                        <button onClick={() => { setCreatingFolderIn(null); setNewFolderName(''); }} style={{ padding: '7px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#777', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Cancel</button>
-                      </div>
-                    ) : (
-                      <button onClick={() => setCreatingFolderIn('__root__')} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.35)', borderRadius: '6px', color: '#93c5fd', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                        New folder
-                      </button>
-                    )
-                  )}
                   <div data-tutorial="view-toggle" style={{ display: 'flex', gap: '4px' }}>
                     <button onClick={() => setDocView('list')} title="List view" style={{ padding: '7px 10px', background: docView === 'list' ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.04)', border: docView === 'list' ? '1px solid rgba(59,130,246,0.4)' : '1px solid rgba(255,255,255,0.08)', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={docView === 'list' ? '#93c5fd' : '#666'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
@@ -1413,121 +1431,48 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                 </div>
               )}
 
-              {isAdmin && showUpload && (
-                <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '20px', marginBottom: '28px' }}>
-                  <p style={{ fontSize: '12px', color: '#777', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em', marginBottom: '16px' }}>UPLOAD DOCUMENT</p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={(e) => setUploadFile(e.target.files[0])} style={{ fontSize: '14px', color: '#888', fontFamily: 'Exo 2, sans-serif' }} />
-                    <select value={uploadFolder} onChange={(e) => setUploadFolder(e.target.value)} style={{ padding: '9px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#fff', fontSize: '14px', fontFamily: 'Exo 2, sans-serif' }}>
-                      <option value="">Select folder...</option>
 
-                      <optgroup label="00 — Start Here"><option value="00_START_HERE/Investor Guide">Investor Guide</option></optgroup>
-                      <optgroup label="01 — Pitch and Overview">
-                        <option value="01_Pitch_and_Overview/01 Pitch Deck">Pitch Deck</option>
-                        <option value="01_Pitch_and_Overview/02 Executive Summary">Executive Summary</option>
-                        <option value="01_Pitch_and_Overview/03 Company Overview">Company Overview</option>
-                        </optgroup>
-                      <optgroup label="02 — Market Opportunity">
-                        <option value="02_Market_Opportunity/01 Industrial Research">Industrial Research</option>
-                        <option value="02_Market_Opportunity/02 Competitor Analysis">Competitor Analysis</option>
-                        <option value="02_Market_Opportunity/03 Customer Segments">Customer Segments</option>
-                      </optgroup>
-                      <optgroup label="03 — Product & Technology">
-                        <option value="03_Product_Technology/01 Product Overview">Product Overview</option>
-                        <option value="03_Product_Technology/02 Engineering Architecture">Engineering Architecture</option>
-                        <option value="03_Product_Technology/03 R&D Roadmap">R&D Roadmap</option>
-                        <option value="03_Product_Technology/04 Patents & IP">Patents & IP</option>
-                      </optgroup>
-                      <optgroup label="04 — Traction">
-                        <option value="04_Traction/01 Revenue Growth">Revenue Growth</option>
-                        <option value="04_Traction/02 Users & Customers">Users & Customers</option>
-                        <option value="04_Traction/03 Contracts">Contracts</option>
-                        <option value="04_Traction/04 Partnerships">Partnerships</option>
-                        <option value="04_Traction/05 Testimonials">Testimonials</option>
-                      </optgroup>
-                      <optgroup label="05 — Financials">
-                        <option value="05_Financials/01 3-5 Year Financial Model">3-5 Year Financial Model</option>
-                        <option value="05_Financials/02 Revenue Projections">Revenue Projections</option>
-                        <option value="05_Financials/03 Cost Structure">Cost Structure</option>
-                        <option value="05_Financials/04 Burn Rate">Burn Rate</option>
-                        <option value="05_Financials/Break-Even Analysis">Break-Even Analysis</option>
-                      </optgroup>
-                      <optgroup label="06 — Legal">
-                        <option value="06_Legal/01 Articles of Incorporation">Articles of Incorporation</option>
-                        <option value="06_Legal/02 Shareholder Agreements">Shareholder Agreements</option>
-                        <option value="06_Legal/03 IP Assignments">IP Assignments</option>
-                        <option value="06_Legal/04 NDAs">NDAs</option>
-                        <option value="06_Legal/05 Employment Agreements">Employment Agreements</option>
-                      </optgroup>
-                      <optgroup label="07 — Team">
-                        <option value="07_Team/01 Founder Bios">Founder Bios</option>
-                        <option value="07_Team/02 Advisor List">Advisor List</option>
-                        <option value="07_Team/03 Org Chart">Org Chart</option>
-                        <option value="07_Team/04 Hiring Plan">Hiring Plan</option>
-                      </optgroup>
-                      <optgroup label="08 — Fundraising">
-                        <option value="08_Fundraising/01 Cap Table">Cap Table</option>
-                        <option value="08_Fundraising/02 Investment Structure">Investment Structure</option>
-                        <option value="08_Fundraising/03 Valuation">Valuation</option>
-                        <option value="08_Fundraising/04 Investor Rights">Investor Rights</option>
-                        <option value="08_Fundraising/05 Funding Timeline">Funding Timeline</option>
-                      </optgroup>
-                      <optgroup label="09 — Investor Updates">
-                        <option value="09_Investor_Updates/01 Monthly Updates">Monthly Updates</option>
-                        <option value="09_Investor_Updates/02 Milestones">Milestones</option>
-                        <option value="09_Investor_Updates/03 Achievements">Achievements</option>
-                      </optgroup>
-                      <optgroup label="10 — Appendix">
-                        <option value="10_Appendix/01 Research Papers">Research Papers</option>
-                        <option value="10_Appendix/02 Technical Drawings">Technical Drawings</option>
-                        <option value="10_Appendix/03 Legal References">Legal References</option>
-                      </optgroup>
-                    </select>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }} onClick={() => setUploadRestricted(!uploadRestricted)}>
-                      <div style={{ width: '16px', height: '16px', borderRadius: '4px', border: uploadRestricted ? '1px solid #3b82f6' : '1px solid rgba(255,255,255,0.2)', background: uploadRestricted ? '#3b82f6' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                        {uploadRestricted && <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke="#fff" strokeWidth="1.5" strokeLinecap="round"/></svg>}
-                      </div>
-                      <span style={{ fontSize: '14px', color: '#888', fontFamily: 'Exo 2, sans-serif' }}>Post-NDA only</span>
-                    </div>
-                    <button onClick={handleUpload} disabled={!uploadFile || !uploadFolder || uploadLoading} style={{ alignSelf: 'flex-start', padding: '9px 18px', background: '#3b82f6', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '14px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer', opacity: (!uploadFile || !uploadFolder || uploadLoading) ? 0.4 : 1 }}>
-                      {uploadLoading ? 'Uploading...' : 'Upload'}
-                    </button>
-                    {uploadMessage && <p style={{ fontSize: '14px', color: uploadMessage.includes('Error') ? '#ef4444' : '#22c55e' }}>{uploadMessage}</p>}
-                  </div>
-                </div>
-              )}
-
-              {/* Fixed action bar — always reserves space when a folder is active */}
-              {activeFolder && (
+              {/* Action bar — back button + new folder, shown whenever employee/admin or inside a subfolder */}
+              {(isEmployee || isAdmin || activeFolder?.includes('/')) && (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', minHeight: '34px' }}>
-                  {/* Back button — invisible when not in a subfolder, but always takes up space */}
+                  {/* Back button — invisible when not in a subfolder, but reserves space */}
                   <button
-                    onClick={() => setActiveFolder(activeFolder.split('/').slice(0, -1).join('/') || null)}
+                    onClick={() => setActiveFolder(activeFolder?.split('/').slice(0, -1).join('/') || null)}
                     style={{
-                      visibility: activeFolder.includes('/') ? 'visible' : 'hidden',
+                      visibility: activeFolder?.includes('/') ? 'visible' : 'hidden',
                       display: 'flex', alignItems: 'center', gap: '6px',
                       background: 'none', border: 'none', color: '#888', fontSize: '13px',
                       fontFamily: 'Exo 2, sans-serif', cursor: 'pointer', padding: '0',
                     }}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-                    {activeFolder.split('/').slice(0, -1).map(p => p.replace(/_/g, ' ').replace(/^\d+\s+/, '')).join(' / ')}
+                    {activeFolder?.split('/').slice(0, -1).map(p => p.replace(/_/g, ' ').replace(/^\d+\s+/, '')).join(' / ')}
                   </button>
-                  {/* New folder — right side, brighter */}
-                  {(isEmployee || isAdmin) && (
-                    creatingFolderIn === activeFolder ? (
+                  {/* New folder — right side */}
+                  {(isEmployee || isAdmin) && (() => {
+                    const folderKey = activeFolder || '__root__';
+                    const folderParent = activeFolder || null;
+                    const topFolder = activeFolder?.split('/')[0];
+                    const isInternalContext = activeFolder && folderPaths.some(fp => fp.startsWith('internal/') && fp.split('/')[1] === topFolder);
+                    return creatingFolderIn === folderKey ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <input autoFocus value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && newFolderName.trim()) createFolder(activeFolder, newFolderName.trim(), false); if (e.key === 'Escape') { setCreatingFolderIn(null); setNewFolderName(''); } }} placeholder="Folder name..." style={{ padding: '7px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '200px' }} />
-                        <button onClick={() => { if (newFolderName.trim()) createFolder(activeFolder, newFolderName.trim(), false); }} style={{ padding: '7px 14px', background: '#3b82f6', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Create</button>
+                        <input autoFocus value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && newFolderName.trim()) createFolder(folderParent, newFolderName.trim(), false, isInternalContext || newFolderAccess === 'internal'); if (e.key === 'Escape') { setCreatingFolderIn(null); setNewFolderName(''); } }} placeholder="Folder name..." style={{ padding: '7px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '160px' }} />
+                        {!isInternalContext && (
+                          <select value={newFolderAccess} onChange={(e) => setNewFolderAccess(e.target.value)} style={{ padding: '7px 10px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '6px', color: '#aaa', fontSize: '12px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer', outline: 'none' }}>
+                            <option value="public">Public</option>
+                            <option value="internal">Internal</option>
+                          </select>
+                        )}
+                        <button onClick={() => { if (newFolderName.trim()) createFolder(folderParent, newFolderName.trim(), false, isInternalContext || newFolderAccess === 'internal'); }} style={{ padding: '7px 14px', background: '#3b82f6', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Create</button>
                         <button onClick={() => { setCreatingFolderIn(null); setNewFolderName(''); }} style={{ padding: '7px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#777', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Cancel</button>
                       </div>
                     ) : (
-                      <button onClick={() => setCreatingFolderIn(activeFolder)} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.35)', borderRadius: '6px', color: '#93c5fd', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>
+                      <button onClick={() => setCreatingFolderIn(folderKey)} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.35)', borderRadius: '6px', color: '#93c5fd', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                         New folder
                       </button>
-                    )
-                  )}
+                    );
+                  })()}
                 </div>
               )}
 
@@ -1664,6 +1609,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                           <span style={{ fontSize: '14px', fontWeight: '500', color: isLocked ? '#555' : '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</span>
                         )}
                         {doc.restricted && !isRenaming && <span style={{ fontSize: '11px', padding: '2px 7px', background: 'rgba(59,130,246,0.1)', color: '#3b82f6', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', flexShrink: 0 }}>POST-NDA</span>}
+                        {doc.internal && !isRenaming && <span style={{ fontSize: '11px', padding: '2px 7px', background: 'rgba(251,146,60,0.1)', color: '#fb923c', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', flexShrink: 0 }}>INTERNAL</span>}
                       </div>
                       {/* Last Opened column */}
                       <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>
@@ -1906,6 +1852,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                     <span style={{ fontSize: '14px', fontWeight: '500', color: isLocked ? '#555' : '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</span>
                                   )}
                                   {doc.restricted && !isRenaming && <span style={{ fontSize: '11px', padding: '2px 7px', background: 'rgba(59,130,246,0.1)', color: '#3b82f6', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', flexShrink: 0 }}>POST-NDA</span>}
+                        {doc.internal && !isRenaming && <span style={{ fontSize: '11px', padding: '2px 7px', background: 'rgba(251,146,60,0.1)', color: '#fb923c', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', flexShrink: 0 }}>INTERNAL</span>}
                                 </div>
                                 <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>
                                   {isMoving ? <span style={{ color: '#3b82f6' }}>Moving...</span> : lastOpened ? `${new Date(lastOpened).toLocaleDateString(undefined, { day: '2-digit', month: 'short' })} ${new Date(lastOpened).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}` : '—'}
@@ -2031,7 +1978,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
               <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', marginBottom: '6px' }}>DUE DILIGENCE</h1>
               <p style={{ fontSize: '14px', color: '#777', marginBottom: '28px' }}>Standard investor due diligence checklist</p>
               <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', padding: '8px 0' }}>
-                {diligenceItems.map((item, i) => (
+                {[...diligenceItems].sort((a, b) => b.checked - a.checked).map((item, i) => (
                   <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 18px', borderBottom: i < diligenceItems.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
                     {/* Checkbox */}
                     <div

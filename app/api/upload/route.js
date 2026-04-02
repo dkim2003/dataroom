@@ -28,14 +28,9 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const isAdmin = user.email === ADMIN_EMAIL
+    const { data: profile } = await supabase.from('profiles').select('role, is_admin').eq('id', user.id).single()
+    const isAdmin = user.email === ADMIN_EMAIL || profile?.is_admin === true
     if (!isAdmin) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
-        .single()
-
       const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
       if (!isEmployee) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -44,7 +39,8 @@ export async function POST(request) {
     const formData = await request.formData()
     const file = formData.get('file')
     const folder = formData.get('folder') // e.g. "03_Product_Technology/04 Patents & IP"
-    const isRestricted = formData.get('isRestricted') === 'true' // true = post_nda only
+    const isRestricted = formData.get('isRestricted') === 'true'
+    const isInternal = formData.get('isInternal') === 'true'
 
     if (!file || !folder) {
       return NextResponse.json({ error: 'Missing file or folder' }, { status: 400 })
@@ -52,7 +48,7 @@ export async function POST(request) {
 
     // Step 3 — build the storage path
     // isRestricted files go into restricted/ prefix so we can check access by path
-    const prefix = isRestricted ? 'restricted' : 'general'
+    const prefix = isInternal ? 'internal' : (isRestricted ? 'restricted' : 'general')
     const bytes = await file.arrayBuffer()
     const buffer = Buffer.from(bytes)
     const path = `${prefix}/${folder}/${file.name}`

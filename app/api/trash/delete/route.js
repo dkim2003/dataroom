@@ -16,8 +16,8 @@ export async function POST(request) {
     const { data: { user }, error: authError } = await supabase.auth.getUser(token)
     if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-    const isAdmin = user.email === ADMIN_EMAIL
+    const { data: profile } = await supabase.from('profiles').select('role, is_admin').eq('id', user.id).single()
+    const isAdmin = user.email === ADMIN_EMAIL || profile?.is_admin === true
     const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
     if (!isAdmin && !isEmployee) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 

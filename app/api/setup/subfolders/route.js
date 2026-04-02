@@ -45,7 +45,9 @@ export async function POST(request) {
     const token = authHeader.replace('Bearer ', '')
     const { data: { user }, error: authError } = await supabase.auth.getUser(token)
     if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    if (user.email !== ADMIN_EMAIL) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    const { data: profile } = await supabase.from('profiles').select('is_admin').eq('id', user.id).single()
+    const isAdmin = user.email === ADMIN_EMAIL || profile?.is_admin === true
+    if (!isAdmin) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
     const results = []
     for (const { path, restricted } of SUBFOLDERS) {

@@ -7,8 +7,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// DocuSign sandbox base URL
-const DS_BASE = 'https://demo.docusign.net/restapi/v2.1'
+const DS_AUTH = 'https://account-d.docusign.com'
 
 // Build a DocuSign JWT (RS256) and exchange it for an access token.
 // Docs: https://developers.docusign.com/platform/auth/jwt/jwt-get-token/
@@ -48,7 +47,7 @@ function makeJwt() {
 }
 
 async function getAccessToken() {
-  const res = await fetch('https://account-d.docusign.com/oauth/token', {
+  const res = await fetch(`${DS_AUTH}/oauth/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -58,11 +57,42 @@ async function getAccessToken() {
   })
   const data = await res.json()
   console.log('DS token response status:', res.status)
-  console.log('DS token response keys:', Object.keys(data))
   if (data.error) console.log('DS token error:', data.error, data.error_description)
   if (!res.ok) throw new Error(data.error_description || data.error || 'DocuSign auth failed')
   if (!data.access_token) throw new Error('DocuSign returned no access_token: ' + JSON.stringify(data))
   return data.access_token.trim()
+}
+
+// Get the correct base_uri and account_id for this account from userinfo.
+// Retries up to 3 times since the sandbox endpoint is intermittently flaky.
+// Falls back to env vars if all attempts fail.
+async function getAccountInfo(accessToken) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(`${DS_AUTH}/oauth/userinfo`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        const account = data.accounts?.find(a => a.is_default) || data.accounts?.[0]
+        if (account?.base_uri && account?.account_id) {
+          console.log('DS userinfo account_id:', account.account_id, 'base_uri:', account.base_uri)
+          return { accountId: account.account_id, baseUri: account.base_uri }
+        }
+      } else {
+        console.log(`DS userinfo attempt ${attempt + 1} failed: ${res.status}`)
+      }
+    } catch (e) {
+      console.log(`DS userinfo attempt ${attempt + 1} error:`, e.message)
+    }
+    if (attempt < 2) await new Promise(r => setTimeout(r, 600))
+  }
+  // Fall back to env vars
+  console.log('DS userinfo failed after 3 attempts — falling back to env vars')
+  return {
+    accountId: process.env.DOCUSIGN_ACCOUNT_ID,
+    baseUri: 'https://demo.docusign.net'
+  }
 }
 
 // POST /api/nda-sign
@@ -89,9 +119,9 @@ export async function POST(request) {
     const accessToken = await getAccessToken()
     const signerName  = profile?.full_name || user.email.split('@')[0]
 
-    const accountId = process.env.DOCUSIGN_ACCOUNT_ID
-    const baseUrl   = DS_BASE
-    console.log('DS accountId:', accountId)
+    const { accountId, baseUri } = await getAccountInfo(accessToken)
+    const baseUrl = `${baseUri}/restapi/v2.1`
+    console.log('DS accountId:', accountId, 'baseUrl:', baseUrl)
 
     // Step 1 — create envelope from template
     const envRes = await fetch(`${baseUrl}/accounts/${accountId}/envelopes`, {

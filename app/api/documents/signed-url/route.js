@@ -19,21 +19,29 @@ export async function POST(request) {
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role')
+      .select('role, is_admin')
       .eq('id', user.id)
       .single()
 
-    const isAdmin = user.email === ADMIN_EMAIL
+    const isAdmin = user.email === ADMIN_EMAIL || profile?.is_admin === true
+    const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
     const hasRestrictedAccess = isAdmin ||
       profile?.role === 'post_nda_investor' ||
       profile?.role === 'post_nda_employee'
+    const hasInternalAccess = isAdmin || isEmployee
 
     const { path, fileName } = await request.json()
     const isRestricted = path.startsWith('restricted/')
+    const isInternal = path.startsWith('internal/')
 
     // Restricted file — no access → return NDA flag instead of URL
     if (isRestricted && !hasRestrictedAccess) {
       return NextResponse.json({ requiresNda: true }, { status: 403 })
+    }
+
+    // Internal file — employees and admin only
+    if (isInternal && !hasInternalAccess) {
+      return NextResponse.json({ error: 'Access denied' }, { status: 403 })
     }
 
     const { data, error: urlError } = await supabase.storage

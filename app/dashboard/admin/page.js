@@ -35,10 +35,10 @@ export default function AdminPage() {
   useEffect(() => {
     async function init() {
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user || user.email !== ADMIN_EMAIL) {
-        router.push('/dashboard')
-        return
-      }
+      if (!user) { router.push('/dashboard'); return }
+      const { data: profile } = await supabase.from('profiles').select('is_admin').eq('id', user.id).single()
+      const isAdmin = user.email === ADMIN_EMAIL || profile?.is_admin === true
+      if (!isAdmin) { router.push('/dashboard'); return }
       setUser(user)
       await fetchProfiles()
       setLoading(false)
@@ -94,6 +94,30 @@ export default function AdminPage() {
 
     if (error) setMessage('Error: ' + error.message)
     else { setMessage('Role updated successfully.'); await fetchProfiles() }
+  }
+
+  async function toggleAdmin(profile) {
+    const newValue = !profile.is_admin
+    const { error } = await supabase
+      .from('profiles')
+      .update({ is_admin: newValue })
+      .eq('id', profile.id)
+    if (error) setMessage('Error: ' + error.message)
+    else { setMessage(`${profile.full_name || profile.email} is ${newValue ? 'now an admin' : 'no longer an admin'}.`); await fetchProfiles() }
+  }
+
+  async function deleteUser(profile) {
+    if (!confirm(`Permanently delete ${profile.full_name || profile.email}? This cannot be undone.`)) return
+    setMessage('Deleting user...')
+    const { data: { session } } = await supabase.auth.getSession()
+    const res = await fetch('/api/admin/delete-user', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: profile.id })
+    })
+    const result = await res.json()
+    if (result.error) setMessage('Error: ' + result.error)
+    else { setMessage('User deleted.'); await fetchProfiles() }
   }
 
   async function createSubfolders() {
@@ -239,11 +263,29 @@ export default function AdminPage() {
             <div>
               <p style={{ fontSize: '15px', fontWeight: '500', color: '#e0e0e0', marginBottom: '3px' }}>{profile.full_name || 'No name'}</p>
               <p style={{ fontSize: '13px', color: '#666', marginBottom: '6px' }}>{profile.email}</p>
-              {renderRoleBadge(profile.role)}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                {renderRoleBadge(profile.role)}
+                {(profile.is_admin || profile.email === ADMIN_EMAIL) && (
+                  <span style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '4px', background: 'rgba(234,179,8,0.12)', color: '#eab308', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em' }}>ADMIN</span>
+                )}
+              </div>
             </div>
             {profile.email !== ADMIN_EMAIL && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 {renderRoleDropdown(profile)}
+                <button
+                  onClick={() => toggleAdmin(profile)}
+                  title={profile.is_admin ? 'Revoke admin' : 'Grant admin'}
+                  style={{
+                    padding: '7px 14px', borderRadius: '6px', fontSize: '13px',
+                    fontFamily: 'Exo 2, sans-serif', cursor: 'pointer',
+                    background: profile.is_admin ? 'rgba(234,179,8,0.12)' : 'rgba(255,255,255,0.04)',
+                    border: profile.is_admin ? '1px solid rgba(234,179,8,0.3)' : '1px solid rgba(255,255,255,0.1)',
+                    color: profile.is_admin ? '#eab308' : '#555'
+                  }}
+                >
+                  {profile.is_admin ? 'Admin' : 'Admin?'}
+                </button>
                 <button
                   onClick={() => updateStatus(profile.id, 'rejected')}
                   style={{ padding: '7px 16px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#888', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}

@@ -15,7 +15,10 @@ export async function POST(request) {
     if (!authHeader) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const token = authHeader.replace('Bearer ', '')
     const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-    if (authError || !user || user.email !== ADMIN_EMAIL) {
+    if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { data: callerProfile } = await supabase.from('profiles').select('is_admin').eq('id', user.id).single()
+    const isAdmin = user.email === ADMIN_EMAIL || callerProfile?.is_admin === true
+    if (!isAdmin) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
@@ -50,24 +53,24 @@ export async function POST(request) {
       html: `
         <!DOCTYPE html>
         <html>
-        <body style="margin:0;padding:0;background:#080808;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-          <table width="100%" cellpadding="0" cellspacing="0" style="background:#080808;padding:48px 24px;">
+        <body style="margin:0;padding:0;background:#f4f4f5;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+          <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:48px 24px;">
             <tr>
               <td align="center">
-                <table width="480" cellpadding="0" cellspacing="0" style="max-width:480px;width:100%;">
+                <table width="480" cellpadding="0" cellspacing="0" style="max-width:480px;width:100%;background:#ffffff;border-radius:12px;padding:40px;">
                   <tr>
-                    <td style="padding-bottom:32px;">
-                      <p style="margin:0;font-size:11px;letter-spacing:0.12em;color:#555;text-transform:uppercase;">Space Launch Technologies</p>
+                    <td style="padding-bottom:28px;">
+                      <p style="margin:0;font-size:11px;letter-spacing:0.12em;color:#999999;text-transform:uppercase;">Space Launch Technologies</p>
                     </td>
                   </tr>
                   <tr>
                     <td style="padding-bottom:16px;">
-                      <h1 style="margin:0;font-size:24px;font-weight:300;color:#ffffff;line-height:1.3;">Access Approved</h1>
+                      <h1 style="margin:0;font-size:24px;font-weight:300;color:#111111;line-height:1.3;">Access Approved</h1>
                     </td>
                   </tr>
                   <tr>
                     <td style="padding-bottom:32px;">
-                      <p style="margin:0;font-size:15px;color:#aaaaaa;line-height:1.7;">
+                      <p style="margin:0;font-size:15px;color:#444444;line-height:1.7;">
                         Hi${fullName ? ` ${fullName}` : ''},<br><br>
                         Your request to access the Space Launch Technologies Virtual Data Room has been approved. Click the button below to confirm your email and get started.
                       </p>
@@ -75,14 +78,14 @@ export async function POST(request) {
                   </tr>
                   <tr>
                     <td style="padding-bottom:40px;">
-                      <a href="${actionLink}" style="display:inline-block;padding:13px 32px;background:#ffffff;color:#080808;text-decoration:none;border-radius:8px;font-size:15px;font-weight:600;letter-spacing:0.01em;">
+                      <a href="${actionLink}" style="display:inline-block;padding:13px 32px;background:#111111;color:#ffffff;text-decoration:none;border-radius:8px;font-size:15px;font-weight:600;letter-spacing:0.01em;">
                         Access Data Room
                       </a>
                     </td>
                   </tr>
                   <tr>
                     <td>
-                      <p style="margin:0;font-size:12px;color:#444444;line-height:1.6;">
+                      <p style="margin:0;font-size:12px;color:#999999;line-height:1.6;">
                         This link expires in 24 hours and can only be used once.<br>
                         If you did not request access, you can safely ignore this email.
                       </p>

@@ -44,30 +44,37 @@ export async function GET(request) {
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role')
+      .select('role, is_admin')
       .eq('id', user.id)
       .single()
 
-    const isAdmin = user.email === ADMIN_EMAIL
+    const isAdmin = user.email === ADMIN_EMAIL || profile?.is_admin === true
     const hasRestrictedAccess = isAdmin ||
       profile?.role === 'post_nda_investor' ||
       profile?.role === 'post_nda_employee'
+    const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
+    const hasInternalAccess = isAdmin || isEmployee
 
     const general = await listAll('general')
     const restricted = await listAll('restricted')
+    const internal = hasInternalAccess ? await listAll('internal') : { files: [], folderPaths: [] }
 
     const documents = []
 
     general.files.forEach(file => {
-      documents.push({ name: file.name, path: file.path, mimeType: file.mimeType, restricted: false })
+      documents.push({ name: file.name, path: file.path, mimeType: file.mimeType, restricted: false, internal: false })
     })
 
     restricted.files.forEach(file => {
-      documents.push({ name: file.name, path: file.path, mimeType: file.mimeType, restricted: true })
+      documents.push({ name: file.name, path: file.path, mimeType: file.mimeType, restricted: true, internal: false })
+    })
+
+    internal.files.forEach(file => {
+      documents.push({ name: file.name, path: file.path, mimeType: file.mimeType, restricted: false, internal: true })
     })
 
     // All known folder paths (for sidebar, including empty folders)
-    const allFolderPaths = [...general.folderPaths, ...restricted.folderPaths]
+    const allFolderPaths = [...general.folderPaths, ...restricted.folderPaths, ...internal.folderPaths]
 
     return NextResponse.json({ documents, folderPaths: allFolderPaths })
 

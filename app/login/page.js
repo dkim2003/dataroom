@@ -51,7 +51,7 @@ export default function LoginPage() {
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('status')
+      .select('status, email_verified')
       .eq('id', data.user.id)
       .single();
 
@@ -65,6 +65,13 @@ export default function LoginPage() {
     if (profile?.status === 'rejected') {
       await supabase.auth.signOut();
       setRejected(true);
+      setLoading(false);
+      return;
+    }
+
+    if (!profile?.email_verified) {
+      await supabase.auth.signOut();
+      setError('Please confirm your email first — check your inbox for the access link sent by the administrator.');
       setLoading(false);
       return;
     }
@@ -88,12 +95,57 @@ export default function LoginPage() {
     });
 
     if (error) {
+      // If the email is already registered, try to re-request access if rejected
+      if (error.message.toLowerCase().includes('already registered') || error.message.toLowerCase().includes('already been registered')) {
+        await handleReRequest();
+        return;
+      }
       setError(error.message);
       setLoading(false);
       return;
     }
 
     setPending(true);
+    setLoading(false);
+  }
+
+  async function handleReRequest() {
+    // Sign in to verify they own the account
+    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+    if (signInError) {
+      setError('This email is already registered. Check your password and try again.');
+      setLoading(false);
+      return;
+    }
+
+    const { data: profile } = await supabase.from('profiles').select('status').eq('id', signInData.user.id).single();
+
+    if (profile?.status === 'rejected') {
+      const res = await fetch('/api/re-request-access', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${signInData.session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ fullName })
+      });
+      const result = await res.json();
+      await supabase.auth.signOut();
+      if (result.error) {
+        setError(result.error);
+      } else {
+        setPending(true);
+      }
+    } else if (profile?.status === 'pending') {
+      await supabase.auth.signOut();
+      setPending(true);
+    } else if (profile?.status === 'approved') {
+      await supabase.auth.signOut();
+      setError('This email already has an approved account. Use "I already have an account" to sign in.');
+    } else {
+      await supabase.auth.signOut();
+      setError('This email is already registered.');
+    }
     setLoading(false);
   }
 
@@ -130,7 +182,13 @@ export default function LoginPage() {
             </svg>
           </div>
           <h1 style={styles.heading}>Access Denied</h1>
-          <p style={styles.subtext}>Your access request was not approved. Contact the administrator if you believe this is an error.</p>
+          <p style={styles.subtext}>Your access request was not approved. You can re-submit your request below.</p>
+          <button
+            onClick={() => { setRejected(false); setStep('investor'); setError(''); }}
+            style={{ ...styles.submitBtn, marginTop: '20px', padding: '11px', fontSize: '15px' }}
+          >
+            Re-request access
+          </button>
           <button onClick={() => { setRejected(false); setStep('greeting'); }} style={styles.backLink}>
             Back to start
           </button>
