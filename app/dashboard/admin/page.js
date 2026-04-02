@@ -46,22 +46,25 @@ export default function AdminPage() {
     init()
   }, [])
 
-  async function fetchProfiles() {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .order('created_at', { ascending: false })
+  async function getToken() {
+    const { data: { session } } = await supabase.auth.getSession()
+    return session?.access_token
+  }
 
-    if (error) setMessage('Error loading profiles: ' + error.message)
-    else setProfiles(data)
+  async function fetchProfiles() {
+    const token = await getToken()
+    const res = await fetch('/api/admin/profiles', { headers: { authorization: `Bearer ${token}` } })
+    const result = await res.json()
+    if (result.error) setMessage('Error loading profiles: ' + result.error)
+    else setProfiles(result.profiles)
   }
 
   async function approveUser(profile) {
     setMessage('Approving...')
-    const { data: { session } } = await supabase.auth.getSession()
+    const token = await getToken()
     const res = await fetch('/api/admin/approve', {
       method: 'POST',
-      headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+      headers: { authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId: profile.id, email: profile.email, fullName: profile.full_name })
     })
     const result = await res.json()
@@ -77,42 +80,49 @@ export default function AdminPage() {
   }
 
   async function updateStatus(id, status) {
-    const { error } = await supabase
-      .from('profiles')
-      .update({ status })
-      .eq('id', id)
-
-    if (error) setMessage('Error: ' + error.message)
+    const token = await getToken()
+    const res = await fetch('/api/admin/profiles', {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: id, updates: { status } })
+    })
+    const result = await res.json()
+    if (result.error) setMessage('Error: ' + result.error)
     else { setMessage('Updated successfully.'); await fetchProfiles() }
   }
 
   async function updateRole(id, role) {
-    const { error } = await supabase
-      .from('profiles')
-      .update({ role })
-      .eq('id', id)
-
-    if (error) setMessage('Error: ' + error.message)
+    const token = await getToken()
+    const res = await fetch('/api/admin/profiles', {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: id, updates: { role } })
+    })
+    const result = await res.json()
+    if (result.error) setMessage('Error: ' + result.error)
     else { setMessage('Role updated successfully.'); await fetchProfiles() }
   }
 
   async function toggleAdmin(profile) {
     const newValue = !profile.is_admin
-    const { error } = await supabase
-      .from('profiles')
-      .update({ is_admin: newValue })
-      .eq('id', profile.id)
-    if (error) setMessage('Error: ' + error.message)
+    const token = await getToken()
+    const res = await fetch('/api/admin/profiles', {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: profile.id, updates: { is_admin: newValue } })
+    })
+    const result = await res.json()
+    if (result.error) setMessage('Error: ' + result.error)
     else { setMessage(`${profile.full_name || profile.email} is ${newValue ? 'now an admin' : 'no longer an admin'}.`); await fetchProfiles() }
   }
 
   async function deleteUser(profile) {
     if (!confirm(`Permanently delete ${profile.full_name || profile.email}? This cannot be undone.`)) return
     setMessage('Deleting user...')
-    const { data: { session } } = await supabase.auth.getSession()
-    const res = await fetch('/api/admin/delete-user', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+    const token = await getToken()
+    const res = await fetch('/api/admin/profiles', {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId: profile.id })
     })
     const result = await res.json()
@@ -191,12 +201,6 @@ export default function AdminPage() {
           <p style={{ fontSize: '13px', color: '#555' }}>Space Launch Technologies — Admin Panel</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <button
-            onClick={createSubfolders}
-            style={{ fontSize: '13px', color: '#3b82f6', background: 'none', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '6px', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif', padding: '7px 14px' }}
-          >
-            Create Standard Subfolders
-          </button>
           <button
             onClick={() => router.push('/dashboard')}
             style={{ fontSize: '13px', color: '#555', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif' }}
