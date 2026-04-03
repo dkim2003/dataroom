@@ -46,7 +46,7 @@ export async function GET(request) {
     // Virtual folders have null metadata; files have metadata
     const subfolders = items
       .filter(f => f.name !== '.keep' && (f.metadata === null || f.id === null))
-      .map(f => f.name)
+      .map(f => ({ name: f.name, createdAt: f.created_at || null }))
     const files = items
       .filter(f => f.name !== '.keep' && f.metadata !== null && f.id !== null)
       .map(f => ({

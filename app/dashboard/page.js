@@ -273,6 +273,16 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const [privateSubfolders, setPrivateSubfolders] = useState([]);
                             const [creatingPrivateFolder, setCreatingPrivateFolder] = useState(false);
                             const [newPrivateFolderName, setNewPrivateFolderName] = useState('');
+                            const [privateDocView, setPrivateDocView] = useState('list');
+                            const [folderNames, setFolderNames] = useState({});
+                            const [contextMenu, setContextMenu] = useState(null); // { folder, x, y }
+                            const [renamingTopFolder, setRenamingTopFolder] = useState(null);
+                            const [renameTopFolderValue, setRenameTopFolderValue] = useState('');
+                            const [renamingLinkId, setRenamingLinkId] = useState(null);
+                            const [renameLinkValue, setRenameLinkValue] = useState('');
+                            const [renamingPrivateItemId, setRenamingPrivateItemId] = useState(null);
+                            const [renamePrivateItemValue, setRenamePrivateItemValue] = useState('');
+                            const [privateItemMenuId, setPrivateItemMenuId] = useState(null);
 
                             useEffect(() => {
                               async function init() {
@@ -308,6 +318,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                   loadPrivateItems(),
                                   loadPrivateFiles(null),
                                   fetch('/api/folder-order').then(r => r.json()).then(d => { if (d.order?.length) setFolderOrder(d.order); }),
+                                  fetch('/api/folder-names', { headers: { authorization: `Bearer ${session.access_token}` } }).then(r => r.json()).then(d => { if (d.names) setFolderNames(d.names); }),
                                   adminCheck ? fetch('/api/admin/profiles', { headers: { authorization: `Bearer ${session.access_token}` } }).then(r => r.json()).then(d => { if (d.profiles) setAllProfiles(d.profiles); }) : Promise.resolve()
                                 ]);
                                 if (!profile.has_seen_tutorial) setShowTutorial(true);
@@ -335,6 +346,32 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               document.addEventListener('click', close);
                               return () => document.removeEventListener('click', close);
                             }, [openMenuPath]);
+
+                            useEffect(() => {
+                              if (!contextMenu) return;
+                              const close = () => setContextMenu(null);
+                              document.addEventListener('click', close);
+                              return () => document.removeEventListener('click', close);
+                            }, [contextMenu]);
+
+                            useEffect(() => {
+                              if (!privateItemMenuId) return;
+                              const close = () => setPrivateItemMenuId(null);
+                              document.addEventListener('click', close);
+                              return () => document.removeEventListener('click', close);
+                            }, [privateItemMenuId]);
+
+                            // Reload private data whenever the private tab becomes active
+                            useEffect(() => {
+                              if (activeTab === 'private' && profile) {
+                                const isEmp = profile.role === 'pre_nda_employee' || profile.role === 'post_nda_employee';
+                                const isAdm = user?.email === ADMIN_EMAIL || profile.is_admin === true;
+                                if (isEmp || isAdm) {
+                                  loadPrivateFiles(selectedPrivateUserId, privateActiveSubfolder);
+                                  if (!selectedPrivateUserId) loadPrivateItems();
+                                }
+                              }
+                            }, [activeTab]);
 
                             async function renderPdfThumbnail(url, path) {
                               const tryRender = async (retries = 6) => {
@@ -690,6 +727,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 setPrivateTitle('');
                                 setPrivateContent('');
                                 setAddingPrivate(null);
+                              } else {
+                                taskDone('Failed to save: ' + result.error, 'error');
                               }
                             }
 
@@ -797,6 +836,105 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               }
                             }
 
+
+                            // Fix: reload from server after folder creation (not just optimistic)
+                            async function createPrivateFolderFixed() {
+                              const name = newPrivateFolderName.trim();
+                              if (!name) return;
+                              setCreatingPrivateFolder(false);
+                              setNewPrivateFolderName('');
+                              const { data: { session } } = await supabase.auth.getSession();
+                              taskStart('Creating folder...');
+                              const res = await fetch('/api/private-files', {
+                                method: 'POST',
+                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ folderName: name, userId: selectedPrivateUserId || undefined })
+                              });
+                              const result = await res.json();
+                              if (!result.error) {
+                                taskDone('Folder created');
+                                await loadPrivateFiles(selectedPrivateUserId, null);
+                              } else {
+                                taskDone('Failed to create folder', 'error');
+                              }
+                            }
+
+                            async function renameLink(id, newName) {
+                              const trimmed = newName.trim();
+                              setRenamingLinkId(null);
+                              if (!trimmed) return;
+                              const { data: { session } } = await supabase.auth.getSession();
+                              taskStart('Renaming...');
+                              const res = await fetch('/api/links', {
+                                method: 'PATCH',
+                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ id, name: trimmed })
+                              });
+                              const result = await res.json();
+                              if (!result.error) {
+                                setLinks(prev => prev.map(l => l.id === id ? { ...l, name: trimmed } : l));
+                                taskDone('Link renamed');
+                              } else {
+                                taskDone('Rename failed', 'error');
+                              }
+                            }
+
+                            async function renamePrivateItem(id, newTitle) {
+                              const trimmed = newTitle.trim();
+                              setRenamingPrivateItemId(null);
+                              if (!trimmed) return;
+                              const { data: { session } } = await supabase.auth.getSession();
+                              const res = await fetch('/api/private', {
+                                method: 'PATCH',
+                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ id, title: trimmed })
+                              });
+                              const result = await res.json();
+                              if (!result.error) {
+                                setPrivateItems(prev => prev.map(i => i.id === id ? { ...i, title: trimmed } : i));
+                                taskDone('Renamed');
+                              } else {
+                                taskDone('Rename failed', 'error');
+                              }
+                            }
+
+                            async function saveTopFolderName(original, display) {
+                              const trimmed = display.trim();
+                              setRenamingTopFolder(null);
+                              if (!trimmed || trimmed === (folderNames[original] || original.replace(/_/g, ' ').replace(/^\d+\s+/, ''))) return;
+                              const { data: { session } } = await supabase.auth.getSession();
+                              await fetch('/api/folder-names', {
+                                method: 'POST',
+                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ original, display: trimmed })
+                              });
+                              setFolderNames(prev => ({ ...prev, [original]: trimmed }));
+                            }
+
+                            async function deleteTopLevelFolder(folderName, displayName) {
+                              if (!confirm(`Delete folder "${displayName}"? All files inside will be moved to trash.`)) return;
+                              setContextMenu(null);
+                              taskStart('Moving files to trash...');
+                              const folderDocs = documents.filter(d => d.path.split('/')[1] === folderName);
+                              const { data: { session } } = await supabase.auth.getSession();
+                              for (const doc of folderDocs) {
+                                await fetch('/api/trash', {
+                                  method: 'POST',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ path: doc.path, name: doc.name })
+                                });
+                              }
+                              if (folderNames[folderName]) {
+                                await fetch('/api/folder-names', {
+                                  method: 'DELETE',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ original: folderName })
+                                });
+                                setFolderNames(prev => { const n = { ...prev }; delete n[folderName]; return n; });
+                              }
+                              await loadDocuments();
+                              taskDone(`"${displayName}" moved to trash`);
+                            }
 
                             async function loadActivity() {
                               setActivityLoading(true);
@@ -1326,7 +1464,9 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
       })()
     : documents;
 
-  const filteredLinks = activeFolder ? links.filter(l => l.folder === activeFolder) : links;
+  const filteredLinks = activeFolder
+    ? links.filter(l => l.folder === activeFolder && l.folder !== '__private__')
+    : links.filter(l => l.folder !== '__private__');
 
   const groupedDocs = filteredDocs.reduce((groups, doc) => {
     const parts = doc.path.split('/');
@@ -1493,6 +1633,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                   >
                     <button
                       onClick={() => { setActiveFolder(folder); setActiveTab('documents'); }}
+                      onContextMenu={(isEmployee || isAdmin) ? (e) => { e.preventDefault(); const zoom = 1.2; setContextMenu({ folder, x: e.clientX / zoom, y: e.clientY / zoom }); } : undefined}
                       style={{
                         flex: 1, display: 'flex', alignItems: 'center', gap: '10px',
                         padding: '9px 8px 9px 14px',
@@ -1516,7 +1657,17 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
                         </svg>
                       )}
-                      {folder.replace(/_/g, ' ').replace(/^\d+\s+/, '')}
+                      {renamingTopFolder === folder ? (
+                        <input
+                          autoFocus
+                          value={renameTopFolderValue}
+                          onChange={e => setRenameTopFolderValue(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') saveTopFolderName(folder, renameTopFolderValue); if (e.key === 'Escape') setRenamingTopFolder(null); }}
+                          onBlur={() => saveTopFolderName(folder, renameTopFolderValue)}
+                          onClick={e => e.stopPropagation()}
+                          style={{ fontSize: '13px', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '100%' }}
+                        />
+                      ) : (folderNames[folder] || folder.replace(/_/g, ' ').replace(/^\d+\s+/, ''))}
                     </button>
                     {subs.length > 0 && (
                       <button
@@ -1606,12 +1757,13 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                   <p style={{ fontSize: '11px', fontWeight: '600', color: '#a855f7', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', margin: 0 }}>PRIVATE</p>
                   <span style={{ fontSize: '18px', color: '#a855f7', display: 'inline-flex', alignItems: 'center', lineHeight: 1, transform: privateOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>›</span>
                 </button>
-                {privateOpen && privateSubfolders.map(sub => {
-                  const subActive = activeTab === 'private' && privateActiveSubfolder === sub;
+                {privateOpen && privateSubfolders.map(subObj => {
+                  const subName = subObj?.name ?? subObj;
+                  const subActive = activeTab === 'private' && privateActiveSubfolder === subName;
                   return (
                     <button
-                      key={sub}
-                      onClick={() => { setActiveTab('private'); setPrivateActiveSubfolder(sub); setActiveFolder(null); loadPrivateFiles(selectedPrivateUserId, sub); }}
+                      key={subName}
+                      onClick={() => { setActiveTab('private'); setPrivateActiveSubfolder(subName); setActiveFolder(null); loadPrivateFiles(selectedPrivateUserId, subName); }}
                       style={{
                         width: '100%', display: 'flex', alignItems: 'center', gap: '8px',
                         padding: '7px 16px 7px 32px',
@@ -1625,7 +1777,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
                       </svg>
-                      {sub}
+                      {subName}
                     </button>
                   );
                 })}
@@ -1897,10 +2049,10 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                         <span /><span />
                       </div>
                       {filteredLinks.map(link => (
-                        <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }} onClick={() => window.open(link.url, '_blank')}>
+                        <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && window.open(link.url, '_blank')}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                            <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>
+                            {renamingLinkId === link.id ? <input autoFocus value={renameLinkValue} onChange={e => setRenameLinkValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') renameLink(link.id, renameLinkValue); if (e.key === 'Escape') setRenamingLinkId(null); }} onBlur={() => renameLink(link.id, renameLinkValue)} onClick={e => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} /> : <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>}
                           </div>
                           <span />
                           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -2020,10 +2172,10 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                           <span /><span />
                         </div>
                         {filteredLinks.map(link => (
-                          <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }} onClick={() => window.open(link.url, '_blank')}>
+                          <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && window.open(link.url, '_blank')}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                              <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>
+                              {renamingLinkId === link.id ? <input autoFocus value={renameLinkValue} onChange={e => setRenameLinkValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') renameLink(link.id, renameLinkValue); if (e.key === 'Escape') setRenamingLinkId(null); }} onBlur={() => renameLink(link.id, renameLinkValue)} onClick={e => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} /> : <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>}
                             </div>
                             <span />
                             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -2033,6 +2185,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                   {openMenuPath === link.id && (
                                     <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', right: 0, top: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
                                       <button onClick={() => { setOpenMenuPath(null); window.open(link.url, '_blank'); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                      <button onClick={() => { setOpenMenuPath(null); setRenamingLinkId(link.id); setRenameLinkValue(link.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>
                                       <div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/>
                                       <button onClick={() => { setOpenMenuPath(null); if (confirm(`Remove link "${link.name}"?`)) deleteLink(link.id); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Remove</button>
                                     </div>
@@ -2177,11 +2330,11 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                       <span /><span />
                     </div>
                     {filteredLinks.map(link => (
-                      <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }} onClick={() => window.open(link.url, '_blank')}>
+                      <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && window.open(link.url, '_blank')}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                          <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>
-                          <span style={{ fontSize: '11px', color: '#3b82f6', background: 'rgba(59,130,246,0.1)', padding: '1px 6px', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif', flexShrink: 0 }}>{link.folder.replace(/_/g, ' ').replace(/^\d+\s+/, '')}</span>
+                          {renamingLinkId === link.id ? <input autoFocus value={renameLinkValue} onChange={e => setRenameLinkValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') renameLink(link.id, renameLinkValue); if (e.key === 'Escape') setRenamingLinkId(null); }} onBlur={() => renameLink(link.id, renameLinkValue)} onClick={e => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} /> : <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>}
+                          {renamingLinkId !== link.id && <span style={{ fontSize: '11px', color: '#3b82f6', background: 'rgba(59,130,246,0.1)', padding: '1px 6px', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif', flexShrink: 0 }}>{link.folder.replace(/_/g, ' ').replace(/^\d+\s+/, '')}</span>}
                         </div>
                         <span />
                         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -2191,6 +2344,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               {openMenuPath === link.id && (
                                 <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', right: 0, top: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
                                   <button onClick={() => { setOpenMenuPath(null); window.open(link.url, '_blank'); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                  <button onClick={() => { setOpenMenuPath(null); setRenamingLinkId(link.id); setRenameLinkValue(link.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>
                                   <div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/>
                                   <button onClick={() => { setOpenMenuPath(null); if (confirm(`Remove link "${link.name}"?`)) deleteLink(link.id); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Remove</button>
                                 </div>
@@ -2496,6 +2650,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                   {openMenuPath === link.id && (
                                     <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', right: 0, bottom: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', marginBottom: '4px' }}>
                                       <button onClick={() => { setOpenMenuPath(null); window.open(link.url, '_blank'); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                      <button onClick={() => { setOpenMenuPath(null); setRenamingLinkId(link.id); setRenameLinkValue(link.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>
                                       <div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/>
                                       <button onClick={() => { setOpenMenuPath(null); if (confirm(`Remove link "${link.name}"?`)) deleteLink(link.id); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Remove</button>
                                     </div>
@@ -2548,7 +2703,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
               )}
 
               {/* Action bar */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', minHeight: '34px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', minHeight: '34px', gap: '8px' }}>
                 {/* Left: back button (when inside subfolder) or admin selector */}
                 {privateActiveSubfolder ? (
                   <button
@@ -2576,27 +2731,36 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     ))}
                   </select>
                 ) : <span />}
-                {/* Right: Add link + New folder */}
-                {!selectedPrivateUserId && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <button onClick={() => { setAddingPrivate('link'); setPrivateTitle(''); setPrivateContent(''); }} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#888', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                      Add link
-                    </button>
-                    {!privateActiveSubfolder && (creatingPrivateFolder ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <input autoFocus value={newPrivateFolderName} onChange={e => setNewPrivateFolderName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && newPrivateFolderName.trim()) createPrivateFolder(); if (e.key === 'Escape') { setCreatingPrivateFolder(false); setNewPrivateFolderName(''); } }} placeholder="Folder name..." style={{ padding: '7px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(168,85,247,0.4)', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '140px' }} />
-                        <button onClick={createPrivateFolder} style={{ padding: '7px 14px', background: '#a855f7', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Create</button>
-                        <button onClick={() => { setCreatingPrivateFolder(false); setNewPrivateFolderName(''); }} style={{ padding: '7px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#777', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Cancel</button>
-                      </div>
-                    ) : (
-                      <button onClick={() => setCreatingPrivateFolder(true)} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', background: 'rgba(168,85,247,0.15)', border: '1px solid rgba(168,85,247,0.35)', borderRadius: '6px', color: '#a855f7', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                        New folder
+                {/* Right: view toggle + Add link + New folder */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {/* View toggle */}
+                  <button onClick={() => setPrivateDocView('list')} title="List view" style={{ padding: '7px 10px', background: privateDocView === 'list' ? 'rgba(168,85,247,0.15)' : 'rgba(255,255,255,0.04)', border: privateDocView === 'list' ? '1px solid rgba(168,85,247,0.4)' : '1px solid rgba(255,255,255,0.08)', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={privateDocView === 'list' ? '#c084fc' : '#666'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                  </button>
+                  <button onClick={() => setPrivateDocView('grid')} title="Grid view" style={{ padding: '7px 10px', background: privateDocView === 'grid' ? 'rgba(168,85,247,0.15)' : 'rgba(255,255,255,0.04)', border: privateDocView === 'grid' ? '1px solid rgba(168,85,247,0.4)' : '1px solid rgba(255,255,255,0.08)', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={privateDocView === 'grid' ? '#c084fc' : '#666'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                  </button>
+                  {!selectedPrivateUserId && (
+                    <>
+                      <button onClick={() => { setAddingLink(true); setLinkTargetFolder('__private__'); setLinkName(''); setLinkUrl(''); }} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#888', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                        Add link
                       </button>
-                    ))}
-                  </div>
-                )}
+                      {!privateActiveSubfolder && (creatingPrivateFolder ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <input autoFocus value={newPrivateFolderName} onChange={e => setNewPrivateFolderName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && newPrivateFolderName.trim()) createPrivateFolderFixed(); if (e.key === 'Escape') { setCreatingPrivateFolder(false); setNewPrivateFolderName(''); } }} placeholder="Folder name..." style={{ padding: '7px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(168,85,247,0.4)', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '140px' }} />
+                          <button onClick={createPrivateFolderFixed} style={{ padding: '7px 14px', background: '#a855f7', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Create</button>
+                          <button onClick={() => { setCreatingPrivateFolder(false); setNewPrivateFolderName(''); }} style={{ padding: '7px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#777', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Cancel</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => setCreatingPrivateFolder(true)} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', background: 'rgba(168,85,247,0.15)', border: '1px solid rgba(168,85,247,0.35)', borderRadius: '6px', color: '#a855f7', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                          New folder
+                        </button>
+                      ))}
+                    </>
+                  )}
+                </div>
               </div>
 
               {/* Subfolder cards — shown at private root */}
@@ -2604,16 +2768,21 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                 <div style={{ marginBottom: '20px' }}>
                   <p style={{ fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', marginBottom: '8px' }}>FOLDERS</p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                    {privateSubfolders.map(sub => (
-                      <div
-                        key={sub}
-                        onClick={() => { setPrivateActiveSubfolder(sub); loadPrivateFiles(selectedPrivateUserId, sub); }}
-                        style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                        <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', fontFamily: 'Exo 2, sans-serif' }}>{sub}</span>
-                      </div>
-                    ))}
+                    {privateSubfolders.map(subObj => {
+                      const subName = subObj?.name ?? subObj;
+                      const subCreatedAt = subObj?.createdAt;
+                      return (
+                        <div
+                          key={subName}
+                          onClick={() => { setPrivateActiveSubfolder(subName); loadPrivateFiles(selectedPrivateUserId, subName); }}
+                          style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                          <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', fontFamily: 'Exo 2, sans-serif', flex: 1 }}>{subName}</span>
+                          {isAdmin && subCreatedAt && <span style={{ fontSize: '11px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{new Date(subCreatedAt).toLocaleDateString()}</span>}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -2635,90 +2804,114 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
               {/* Private files */}
               {privateFiles.length > 0 && (
                 <div style={{ marginBottom: '20px' }}>
-                  <p style={{ fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', marginBottom: '8px' }}>FILES</p>
+                  {privateDocView === 'list' && (
+                    <div style={{ display: 'grid', gridTemplateColumns: isAdmin ? '1fr 130px 40px' : '1fr 40px', padding: '4px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>FILES</span>
+                      {isAdmin && <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>DATE UPLOADED</span>}
+                      <span />
+                    </div>
+                  )}
+                  {privateDocView === 'grid' && <p style={{ fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', marginBottom: '8px' }}>FILES</p>}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                    {privateFiles.map(file => {
-                      const isRenaming = renamingPrivateFilePath === file.path;
-                      return (
-                        <div key={file.path} style={{ display: 'grid', gridTemplateColumns: '1fr 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, cursor: isRenaming ? 'default' : 'pointer' }} onClick={() => !isRenaming && openDocument(file.path, file.name)}>
-                            <FileTypeIcon name={file.name} size={24} />
-                            {isRenaming ? (
-                              <input
-                                autoFocus
-                                value={renamePrivateFileValue}
-                                onChange={e => setRenamePrivateFileValue(e.target.value)}
-                                onKeyDown={e => { if (e.key === 'Enter') renamePrivateFile(file, renamePrivateFileValue); if (e.key === 'Escape') setRenamingPrivateFilePath(null); }}
-                                onBlur={() => renamePrivateFile(file, renamePrivateFileValue)}
-                                onClick={e => e.stopPropagation()}
-                                style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(168,85,247,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }}
-                              />
-                            ) : (
-                              <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', fontFamily: 'Exo 2, sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</span>
-                            )}
+                    {privateDocView === 'grid' ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(155px, 1fr))', gap: '10px' }}>
+                        {privateFiles.map(file => (
+                          <div key={file.path} onClick={() => openDocument(file.path, file.name)} style={{ display: 'flex', flexDirection: 'column', background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '10px', overflow: 'hidden', cursor: 'pointer', transition: 'border-color 0.15s' }}>
+                            <div style={{ height: '90px', background: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <FileTypeIcon name={file.name} size={32} />
+                            </div>
+                            <div style={{ padding: '8px 10px' }}>
+                              <p style={{ fontSize: '12px', fontWeight: '500', color: '#ddd', fontFamily: 'Exo 2, sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>{file.name}</p>
+                              {isAdmin && file.createdAt && <p style={{ fontSize: '11px', color: '#444', fontFamily: 'Exo 2, sans-serif', margin: '2px 0 0' }}>{new Date(file.createdAt).toLocaleDateString()}</p>}
+                            </div>
                           </div>
-                          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                            {!isRenaming && (
-                              <div style={{ position: 'relative' }}>
-                                <button onClick={e => { e.stopPropagation(); setOpenMenuPath(openMenuPath === file.path ? null : file.path); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 8px', borderRadius: '4px', fontSize: '18px', lineHeight: 1, fontFamily: 'monospace' }}>⋮</button>
-                                {openMenuPath === file.path && (
-                                  <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', right: 0, top: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
-                                    <button onClick={() => { setOpenMenuPath(null); openDocument(file.path, file.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
-                                    <button onClick={() => { setOpenMenuPath(null); downloadDocument(file.path, file.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Download</button>
-                                    {!selectedPrivateUserId && <button onClick={() => { setOpenMenuPath(null); setRenamingPrivateFilePath(file.path); setRenamePrivateFileValue(file.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>}
-                                    {!selectedPrivateUserId && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenMenuPath(null); if (confirm(`Delete "${file.name}"?`)) deletePrivateFile(file.path); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Delete</button></>}
-                                  </div>
-                                )}
-                              </div>
-                            )}
+                        ))}
+                      </div>
+                    ) : (
+                      privateFiles.map(file => {
+                        const isRenaming = renamingPrivateFilePath === file.path;
+                        return (
+                          <div key={file.path} style={{ display: 'grid', gridTemplateColumns: isAdmin ? '1fr 130px 40px' : '1fr 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, cursor: isRenaming ? 'default' : 'pointer' }} onClick={() => !isRenaming && openDocument(file.path, file.name)}>
+                              <FileTypeIcon name={file.name} size={24} />
+                              {isRenaming ? (
+                                <input autoFocus value={renamePrivateFileValue} onChange={e => setRenamePrivateFileValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') renamePrivateFile(file, renamePrivateFileValue); if (e.key === 'Escape') setRenamingPrivateFilePath(null); }} onBlur={() => renamePrivateFile(file, renamePrivateFileValue)} onClick={e => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(168,85,247,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} />
+                              ) : (
+                                <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', fontFamily: 'Exo 2, sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</span>
+                              )}
+                            </div>
+                            {isAdmin && <span style={{ fontSize: '12px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{file.createdAt ? new Date(file.createdAt).toLocaleDateString() : '—'}</span>}
+                            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                              {!isRenaming && (
+                                <div style={{ position: 'relative' }}>
+                                  <button onClick={e => { e.stopPropagation(); setOpenMenuPath(openMenuPath === file.path ? null : file.path); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 8px', borderRadius: '4px', fontSize: '18px', lineHeight: 1, fontFamily: 'monospace' }}>⋮</button>
+                                  {openMenuPath === file.path && (
+                                    <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', right: 0, top: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+                                      <button onClick={() => { setOpenMenuPath(null); openDocument(file.path, file.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                      <button onClick={() => { setOpenMenuPath(null); downloadDocument(file.path, file.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Download</button>
+                                      {!selectedPrivateUserId && <button onClick={() => { setOpenMenuPath(null); setRenamingPrivateFilePath(file.path); setRenamePrivateFileValue(file.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>}
+                                      {!selectedPrivateUserId && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenMenuPath(null); if (confirm(`Delete "${file.name}"?`)) deletePrivateFile(file.path); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Delete</button></>}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })
+                    )}
                   </div>
                 </div>
               )}
               {privateFilesLoading && <p style={{ fontSize: '14px', color: '#555', fontFamily: 'Exo 2, sans-serif', marginBottom: '16px' }}>Loading files...</p>}
 
-              {/* Notes & links — own view only */}
-              {!selectedPrivateUserId && (
-                <>
-                  {privateItems.length > 0 && (
-                    <p style={{ fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', marginBottom: '8px' }}>NOTES & LINKS</p>
-                  )}
-                  {privateItems.length === 0 && !addingPrivate && privateFiles.length === 0 && !privateFilesLoading && privateSubfolders.length === 0 ? (
-                    <p style={{ fontSize: '14px', color: '#555', fontFamily: 'Exo 2, sans-serif' }}>Nothing here yet. Upload a file, add a link, or create a folder.</p>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {privateItems.map(item => (
-                        <div key={item.id} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', padding: '14px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px' }}>
-                          <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', minWidth: 0, flex: 1 }}>
-                            {item.type === 'link' ? (
-                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '2px' }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                            ) : (
-                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '2px' }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-                            )}
-                            <div style={{ minWidth: 0 }}>
-                              {item.type === 'link' ? (
-                                <a href={item.content} target="_blank" rel="noreferrer" style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', fontFamily: 'Exo 2, sans-serif', textDecoration: 'none' }} onMouseEnter={e => e.target.style.color='#93c5fd'} onMouseLeave={e => e.target.style.color='#e0e0e0'}>{item.title}</a>
+              {/* Private links — from document_links with folder='__private__' */}
+              {(() => {
+                const viewUserId = selectedPrivateUserId || user.id;
+                const privateLinks = links.filter(l => l.folder === '__private__' && (l.created_by === viewUserId || (isAdmin && !selectedPrivateUserId)));
+                if (privateLinks.length === 0) return null;
+                return (
+                  <div style={{ marginBottom: '20px' }}>
+                    <p style={{ fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', marginBottom: '8px' }}>LINKS</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                      {privateLinks.map(link => {
+                        const isRenaming = renamingLinkId === link.id;
+                        return (
+                          <div key={link.id} style={{ display: 'grid', gridTemplateColumns: isAdmin ? '1fr 130px 40px' : '1fr 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: isRenaming ? 'default' : 'pointer' }} onClick={() => !isRenaming && window.open(link.url, '_blank')}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                              {isRenaming ? (
+                                <input autoFocus value={renameLinkValue} onChange={e => setRenameLinkValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') renameLink(link.id, renameLinkValue); if (e.key === 'Escape') setRenamingLinkId(null); }} onBlur={() => renameLink(link.id, renameLinkValue)} onClick={e => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(168,85,247,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} />
                               ) : (
-                                <p style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', fontFamily: 'Exo 2, sans-serif', margin: '0 0 4px' }}>{item.title}</p>
+                                <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>
                               )}
-                              {item.type === 'note' && <p style={{ fontSize: '13px', color: '#666', fontFamily: 'Exo 2, sans-serif', margin: 0, whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>{item.content}</p>}
-                              {item.type === 'link' && <p style={{ fontSize: '12px', color: '#444', fontFamily: 'Exo 2, sans-serif', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.content}</p>}
+                            </div>
+                            {isAdmin && <span style={{ fontSize: '12px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{link.created_at ? new Date(link.created_at).toLocaleDateString() : '—'}</span>}
+                            <div style={{ display: 'flex', justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
+                              <div style={{ position: 'relative' }}>
+                                <button onClick={e => { e.stopPropagation(); setOpenMenuPath(openMenuPath === link.id ? null : link.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 8px', borderRadius: '4px', fontSize: '18px', lineHeight: 1, fontFamily: 'monospace' }}>⋮</button>
+                                {openMenuPath === link.id && (
+                                  <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', right: 0, top: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+                                    <button onClick={() => { setOpenMenuPath(null); window.open(link.url, '_blank'); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                    {link.created_by === user.id && <button onClick={() => { setOpenMenuPath(null); setRenamingLinkId(link.id); setRenameLinkValue(link.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>}
+                                    {(link.created_by === user.id || isAdmin) && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenMenuPath(null); if (confirm(`Remove link "${link.name}"?`)) deleteLink(link.id); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Remove</button></>}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
-                          <button onClick={() => { if (confirm(`Delete "${item.title}"?`)) deletePrivateItem(item.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#333', padding: '2px 6px', fontSize: '16px', flexShrink: 0 }} onMouseEnter={e => e.target.style.color='#ef4444'} onMouseLeave={e => e.target.style.color='#333'}>×</button>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
-                  )}
-                </>
-              )}
+                  </div>
+                );
+              })()}
 
-              {/* Admin view of another user's private files — no notes/links shown */}
-              {selectedPrivateUserId && !privateFilesLoading && privateFiles.length === 0 && (
-                <p style={{ fontSize: '14px', color: '#555', fontFamily: 'Exo 2, sans-serif' }}>No private files for this user.</p>
+              {/* Empty state */}
+              {!privateFilesLoading && privateFiles.length === 0 && privateSubfolders.length === 0 && links.filter(l => l.folder === '__private__' && (l.created_by === (selectedPrivateUserId || user.id) || (isAdmin && !selectedPrivateUserId))).length === 0 && (
+                <p style={{ fontSize: '14px', color: '#555', fontFamily: 'Exo 2, sans-serif' }}>
+                  {selectedPrivateUserId ? 'No private files for this user.' : 'Nothing here yet. Upload a file, add a link, or create a folder.'}
+                </p>
               )}
             </div>
           )}
@@ -3013,12 +3206,40 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
         </div>
       )}
 
+      {/* Right-click context menu for top-level folders */}
+      {contextMenu && (
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x, background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 300, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.6)' }}
+        >
+          <button
+            onClick={() => {
+              const current = folderNames[contextMenu.folder] || contextMenu.folder.replace(/_/g, ' ').replace(/^\d+\s+/, '');
+              setRenamingTopFolder(contextMenu.folder);
+              setRenameTopFolderValue(current);
+              setContextMenu(null);
+            }}
+            style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}
+          >Rename</button>
+          {isAdmin && <>
+            <div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/>
+            <button
+              onClick={() => {
+                const displayName = folderNames[contextMenu.folder] || contextMenu.folder.replace(/_/g, ' ').replace(/^\d+\s+/, '');
+                deleteTopLevelFolder(contextMenu.folder, displayName);
+              }}
+              style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}
+            >Delete folder</button>
+          </>}
+        </div>
+      )}
+
       {/* Add link modal */}
       {addingLink && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }} onClick={() => { setAddingLink(false); setLinkTargetFolder(null); }}>
           <div onClick={e => e.stopPropagation()} style={{ background: '#141414', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', padding: '28px', width: '400px', fontFamily: 'Exo 2, sans-serif' }}>
             <h2 style={{ fontSize: '16px', fontWeight: '600', color: '#fff', marginBottom: linkTargetFolder ? '6px' : '20px' }}>Add link</h2>
-            {linkTargetFolder && <p style={{ fontSize: '12px', color: '#555', fontFamily: 'Exo 2, sans-serif', marginBottom: '20px' }}>Saving to: {linkTargetFolder.split('/').map(p => p.replace(/_/g, ' ').replace(/^\d+\s+/, '')).join(' / ')}</p>}
+            {linkTargetFolder && <p style={{ fontSize: '12px', color: '#555', fontFamily: 'Exo 2, sans-serif', marginBottom: '20px' }}>Saving to: {linkTargetFolder === '__private__' ? 'Private' : linkTargetFolder.split('/').map(p => p.replace(/_/g, ' ').replace(/^\d+\s+/, '')).join(' / ')}</p>}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div>
                 <label style={{ fontSize: '12px', color: '#555', letterSpacing: '0.08em', display: 'block', marginBottom: '6px' }}>NAME</label>

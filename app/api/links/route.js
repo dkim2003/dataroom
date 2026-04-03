@@ -37,6 +37,8 @@ export async function GET(request) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
     const filtered = data.filter(link => {
+      // Private-tab links: only visible to creator, or to admin
+      if (link.folder === '__private__') return link.created_by === user.id || isAdmin
       if (link.internal  && !isEmployee && !isAdmin) return false
       if (link.restricted && !isPostNda  && !isAdmin) return false
       return true
@@ -69,6 +71,25 @@ export async function POST(request) {
       .select()
       .single()
 
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ link: data })
+  } catch (err) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
+  }
+}
+
+// PATCH /api/links — rename a link
+export async function PATCH(request) {
+  try {
+    const auth = await verifyUser(request)
+    if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { user, profile } = auth
+    const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
+    const isAdmin    = user.email === ADMIN_EMAIL || profile?.is_admin === true
+    if (!isEmployee && !isAdmin) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    const { id, name } = await request.json()
+    if (!id || !name?.trim()) return NextResponse.json({ error: 'id and name required' }, { status: 400 })
+    const { data, error } = await supabase.from('document_links').update({ name: name.trim() }).eq('id', id).select().single()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ link: data })
   } catch (err) {

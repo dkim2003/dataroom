@@ -57,6 +57,27 @@ export async function POST(request) {
   }
 }
 
+// PATCH — rename a private item title
+export async function PATCH(request) {
+  try {
+    const user = await verifyUser(request)
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { id, title } = await request.json()
+    if (!id || !title?.trim()) return NextResponse.json({ error: 'id and title required' }, { status: 400 })
+    const { data, error } = await supabase
+      .from('private_items')
+      .update({ title: title.trim() })
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .select()
+      .single()
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ item: data })
+  } catch (err) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
+  }
+}
+
 // DELETE — delete a private item (verified to belong to the user)
 export async function DELETE(request) {
   try {
