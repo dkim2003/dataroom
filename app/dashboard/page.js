@@ -273,13 +273,13 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 }
                                 setUser(user);
                                 setProfile(profile);
-                                setLoading(false);
                                 await loadDocuments();
-                                await loadDiligence();
-                                await loadUserRecents();
-                                const orderRes = await fetch('/api/folder-order');
-                                const orderData = await orderRes.json();
-                                if (orderData.order?.length) setFolderOrder(orderData.order);
+                                setLoading(false);
+                                await Promise.all([
+                                  loadDiligence(),
+                                  loadUserRecents(),
+                                  fetch('/api/folder-order').then(r => r.json()).then(d => { if (d.order?.length) setFolderOrder(d.order); })
+                                ]);
                                 if (!profile.has_seen_tutorial) setShowTutorial(true);
                               }
                               init();
@@ -1030,9 +1030,20 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
   }
 
   if (loading) {
+    const r = 5.5, cx = 9, cy = 9, circ = 2 * Math.PI * r;
     return (
-      <div style={{ minHeight: '100vh', background: '#080808', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <p style={{ color: '#666', fontSize: '15px', fontFamily: 'Exo 2, sans-serif' }}>Loading...</p>
+      <div style={{ minHeight: '100vh', background: '#080808' }}>
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', display: 'flex', alignItems: 'center', gap: '16px', background: '#141414', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '999px', padding: '20px 36px', boxShadow: '0 4px 24px rgba(0,0,0,0.5)', fontFamily: 'Exo 2, sans-serif', whiteSpace: 'nowrap' }}>
+          <svg width="28" height="28" viewBox="0 0 18 18" style={{ flexShrink: 0 }}>
+            <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(34,197,94,0.2)" strokeWidth="2"/>
+            <circle cx={cx} cy={cy} r={r} fill="none" stroke="#22c55e" strokeWidth="2"
+              strokeDasharray={`${circ * 0.65} ${circ * 0.35}`}
+              strokeLinecap="round"
+              style={{ transformOrigin: `${cx}px ${cy}px`, animation: 'spin 0.9s linear infinite' }}/>
+          </svg>
+          <span style={{ fontSize: '18px', color: '#aaa' }}>Logging you in...</span>
+        </div>
+        <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
@@ -1708,17 +1719,12 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     >
                       {/* Name column */}
                       <div onClick={() => !isRenaming && openDocument(doc.path, doc.name)} style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
-                        {isLocked ? (
-                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                        ) : (
-                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                        )}
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                         {isRenaming ? (
                           <input autoFocus value={renameValue} onChange={(e) => setRenameValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleRenameDoc(doc, renameValue); if (e.key === 'Escape') setRenamingDocPath(null); }} onBlur={() => setRenamingDocPath(null)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} />
                         ) : (
-                          <span style={{ fontSize: '14px', fontWeight: '500', color: isLocked ? '#555' : '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</span>
+                          <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</span>
                         )}
-                        {doc.restricted && !isRenaming && <span style={{ fontSize: '11px', padding: '2px 7px', background: 'rgba(59,130,246,0.1)', color: '#3b82f6', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', flexShrink: 0 }}>POST-NDA</span>}
                         {doc.internal && !isRenaming && <span style={{ fontSize: '11px', padding: '2px 7px', background: 'rgba(251,146,60,0.1)', color: '#fb923c', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', flexShrink: 0 }}>INTERNAL</span>}
                       </div>
                       {/* Last Opened column */}
@@ -1778,7 +1784,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             <FileTypeIcon name={doc.name} size={48} />
                           </div>
                         )}
-                        {doc.restricted && (
+                        {isLocked && (
                           <div style={{ position: 'absolute', top: '8px', right: '8px', fontSize: '10px', padding: '2px 6px', background: 'rgba(59,130,246,0.2)', color: '#93c5fd', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif', backdropFilter: 'blur(4px)' }}>POST-NDA</div>
                         )}
                       </div>
@@ -1951,17 +1957,12 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: isMoving ? 'rgba(59,130,246,0.06)' : 'rgba(255,255,255,0.02)', border: `1px solid ${isMoving ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)'}`, borderRadius: '6px', opacity: isMoving ? 0.6 : 1, cursor: isMoving ? 'default' : 'pointer', transition: 'opacity 0.15s' }}
                               >
                                 <div onClick={() => !isRenaming && openDocument(doc.path, doc.name)} style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
-                                  {isLocked ? (
-                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                  ) : (
-                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                                  )}
+                                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                                   {isRenaming ? (
                                     <input autoFocus value={renameValue} onChange={(e) => setRenameValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleRenameDoc(doc, renameValue); if (e.key === 'Escape') setRenamingDocPath(null); }} onBlur={() => setRenamingDocPath(null)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} />
                                   ) : (
-                                    <span style={{ fontSize: '14px', fontWeight: '500', color: isLocked ? '#555' : '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</span>
+                                    <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</span>
                                   )}
-                                  {doc.restricted && !isRenaming && <span style={{ fontSize: '11px', padding: '2px 7px', background: 'rgba(59,130,246,0.1)', color: '#3b82f6', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', flexShrink: 0 }}>POST-NDA</span>}
                         {doc.internal && !isRenaming && <span style={{ fontSize: '11px', padding: '2px 7px', background: 'rgba(251,146,60,0.1)', color: '#fb923c', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', flexShrink: 0 }}>INTERNAL</span>}
                                 </div>
                                 <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>
@@ -2007,12 +2008,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 style={{ display: 'flex', flexDirection: 'column', background: isMoving ? 'rgba(59,130,246,0.06)' : '#111', border: `1px solid ${isMoving ? 'rgba(59,130,246,0.3)' : 'rgba(255,255,255,0.07)'}`, borderRadius: '10px', overflow: 'hidden', cursor: isMoving ? 'default' : 'pointer', opacity: isMoving ? 0.6 : 1, transition: 'border-color 0.15s' }}
                               >
                                 <div style={{ height: '160px', background: '#1a1a1a', overflow: 'hidden', position: 'relative', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                                  {isLocked ? (
-                                    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                      <span style={{ fontSize: '11px', color: '#333', fontFamily: 'Exo 2, sans-serif' }}>NDA required</span>
-                                    </div>
-                                  ) : isPdf && pdfThumbnails[doc.path] ? (
+                                  {isPdf && pdfThumbnails[doc.path] ? (
                                     <img src={pdfThumbnails[doc.path]} alt={doc.name} style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top', display: 'block' }} />
                                   ) : !isPdf ? (
                                     <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -2022,9 +2018,6 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                     <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                       <div style={{ width: '20px', height: '20px', borderRadius: '50%', border: '2px solid #2a2a2a', borderTopColor: '#444' }} />
                                     </div>
-                                  )}
-                                  {doc.restricted && (
-                                    <div style={{ position: 'absolute', top: '8px', right: '8px', fontSize: '10px', padding: '2px 6px', background: 'rgba(59,130,246,0.2)', color: '#93c5fd', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif' }}>POST-NDA</div>
                                   )}
                                 </div>
                                 <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
