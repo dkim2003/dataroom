@@ -1591,7 +1591,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                   </div>
                 )}
 
-                {/* Private workspace */}
+                {/* Private workspace — employees and admin only */}
+                {(isEmployee || isAdmin) && (<>
                 <div style={{ margin: '16px 16px 6px', borderTop: '1px solid rgba(255,255,255,0.05)' }} />
                 <button
                   onClick={() => { setActiveTab('private'); setActiveFolder(null); setPrivateActiveSubfolder(null); setPrivateOpen(o => !o); }}
@@ -1628,6 +1629,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     </button>
                   );
                 })}
+                </>)}
 
                 {/* Recently Deleted */}
                 {(isEmployee || isAdmin) && (
@@ -2512,8 +2514,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
             </div>
           )}
 
-          {/* Private tab */}
-          {activeTab === 'private' && (
+          {/* Private tab — employees and admin only */}
+          {(isEmployee || isAdmin) && activeTab === 'private' && (
             <div>
               <div style={{ marginBottom: '28px' }}>
                 <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', marginBottom: '6px' }}>

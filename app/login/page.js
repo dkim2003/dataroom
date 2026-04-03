@@ -342,7 +342,7 @@ const styles = {
     backgroundImage: 'url(/artemis2.jpeg)',
     backgroundSize: 'cover',
     backgroundPosition: 'center',
-    opacity: 0.12,
+    opacity: 0.28,
     zIndex: 0,
     pointerEvents: 'none',
   },
