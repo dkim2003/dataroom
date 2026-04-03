@@ -30,10 +30,7 @@ export async function POST(request) {
 
     const { data: profile } = await supabase.from('profiles').select('role, is_admin').eq('id', user.id).single()
     const isAdmin = user.email === ADMIN_EMAIL || profile?.is_admin === true
-    if (!isAdmin) {
-      const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
-      if (!isEmployee) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
 
     // Step 2 — parse the uploaded file from the form
     const formData = await request.formData()
@@ -41,9 +38,34 @@ export async function POST(request) {
     const folder = formData.get('folder') // e.g. "03_Product_Technology/04 Patents & IP"
     const isRestricted = formData.get('isRestricted') === 'true'
     const isInternal = formData.get('isInternal') === 'true'
+    const isPrivate = formData.get('isPrivate') === 'true'
+    const privateSubfolder = formData.get('privateSubfolder') || ''
 
-    if (!file || !folder) {
-      return NextResponse.json({ error: 'Missing file or folder' }, { status: 400 })
+    if (!file) {
+      return NextResponse.json({ error: 'Missing file' }, { status: 400 })
+    }
+
+    // Private upload — any authenticated user can upload to their own private folder
+    if (isPrivate) {
+      const bytes = await file.arrayBuffer()
+      const buffer = Buffer.from(bytes)
+      const path = privateSubfolder
+        ? `private/${user.id}/${privateSubfolder}/${file.name}`
+        : `private/${user.id}/${file.name}`
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(path, buffer, { contentType: file.type, upsert: true })
+      if (uploadError) return NextResponse.json({ error: uploadError.message }, { status: 500 })
+      return NextResponse.json({ success: true, path })
+    }
+
+    // Non-private uploads require employee or admin
+    if (!isAdmin && !isEmployee) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    if (!folder) {
+      return NextResponse.json({ error: 'Missing folder' }, { status: 400 })
     }
 
     // Step 3 — build the storage path

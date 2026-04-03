@@ -34,6 +34,13 @@ export async function POST(request) {
     const isRestricted = path.startsWith('restricted/')
     const isInternal = path.startsWith('internal/')
 
+    // Private file — owner or admin only
+    if (path.startsWith('private/')) {
+      const pathUserId = path.split('/')[1]
+      if (pathUserId !== user.id && !isAdmin)
+        return NextResponse.json({ error: 'Access denied' }, { status: 403 })
+    }
+
     // Restricted file — no access → return NDA flag instead of URL
     if (isRestricted && !hasRestrictedAccess) {
       return NextResponse.json({ requiresNda: true }, { status: 403 })
