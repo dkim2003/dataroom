@@ -153,7 +153,8 @@ export default function LoginPage() {
   if (pending) {
     return (
       <div style={styles.page}>
-        <div style={{ textAlign: 'center', maxWidth: '320px', padding: '0 24px' }}>
+        <div style={styles.bgImage} />
+        <div style={{ textAlign: 'center', maxWidth: '320px', padding: '0 24px', position: 'relative', zIndex: 1 }}>
           <div style={styles.iconCircle}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="1.5">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
@@ -173,7 +174,8 @@ export default function LoginPage() {
   if (rejected) {
     return (
       <div style={styles.page}>
-        <div style={{ textAlign: 'center', maxWidth: '320px', padding: '0 24px' }}>
+        <div style={styles.bgImage} />
+        <div style={{ textAlign: 'center', maxWidth: '320px', padding: '0 24px', position: 'relative', zIndex: 1 }}>
           <div style={styles.iconCircle}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="1.5">
               <circle cx="12" cy="12" r="10"/>
@@ -201,7 +203,8 @@ export default function LoginPage() {
   if (step === 'greeting') {
     return (
       <div style={styles.page}>
-        <div style={{ textAlign: 'center', width: '360px', padding: '0 24px' }}>
+        <div style={styles.bgImage} />
+        <div style={{ textAlign: 'center', width: '360px', padding: '0 24px', position: 'relative', zIndex: 1 }}>
           {/* Sol indicator */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '28px' }}>
             <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6' }}/>
@@ -235,7 +238,8 @@ export default function LoginPage() {
   if (step === 'investor') {
     return (
       <div style={styles.page}>
-        <div style={{ width: '100%', maxWidth: '320px', padding: '0 24px' }}>
+        <div style={styles.bgImage} />
+        <div style={{ width: '100%', maxWidth: '320px', padding: '0 24px', position: 'relative', zIndex: 1 }}>
           <div style={{ textAlign: 'center', marginBottom: '28px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px' }}>
               <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6' }}/>
@@ -265,7 +269,8 @@ export default function LoginPage() {
   if (step === 'employee') {
     return (
       <div style={styles.page}>
-        <div style={{ width: '100%', maxWidth: '320px', padding: '0 24px' }}>
+        <div style={styles.bgImage} />
+        <div style={{ width: '100%', maxWidth: '320px', padding: '0 24px', position: 'relative', zIndex: 1 }}>
           <div style={{ textAlign: 'center', marginBottom: '28px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px' }}>
               <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6' }}/>
@@ -294,7 +299,8 @@ export default function LoginPage() {
   // --- Sign in (existing account) ---
   return (
     <div style={styles.page}>
-      <div style={{ width: '100%', maxWidth: '320px', padding: '0 24px' }}>
+      <div style={styles.bgImage} />
+      <div style={{ width: '100%', maxWidth: '320px', padding: '0 24px', position: 'relative', zIndex: 1 }}>
         <div style={{ textAlign: 'center', marginBottom: '28px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px' }}>
             <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6' }}/>
@@ -327,6 +333,18 @@ const styles = {
     justifyContent: 'center',
     background: '#080808',
     fontFamily: 'Exo 2, sans-serif',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  bgImage: {
+    position: 'fixed',
+    inset: 0,
+    backgroundImage: 'url(/artemis2.jpeg)',
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+    opacity: 0.12,
+    zIndex: 0,
+    pointerEvents: 'none',
   },
   iconCircle: {
     width: '48px',
@@ -366,8 +384,8 @@ const styles = {
   choiceBtn: {
     width: '100%',
     padding: '13px',
-    background: 'rgba(255,255,255,0.04)',
-    border: '1px solid rgba(255,255,255,0.1)',
+    background: '#111',
+    border: '1px solid #222',
     borderRadius: '8px',
     color: '#ccc',
     fontSize: '17px',
@@ -376,13 +394,13 @@ const styles = {
   },
   choiceBtnMuted: {
     color: '#666',
-    borderColor: 'rgba(255,255,255,0.06)',
+    borderColor: '#1a1a1a',
     marginTop: '4px',
   },
   input: {
     padding: '11px 14px',
-    background: 'rgba(255,255,255,0.05)',
-    border: '1px solid rgba(255,255,255,0.1)',
+    background: '#111',
+    border: '1px solid #222',
     borderRadius: '8px',
     color: '#fff',
     fontSize: '16px',

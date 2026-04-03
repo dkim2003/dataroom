@@ -21,9 +21,9 @@ function NdaContent() {
   useEffect(() => {
     if (!event) return
 
-    if (event === 'signing_complete') {
+    if (event === 'signing_complete' || event === 'completed') {
       completeNda()
-    } else if (event === 'cancel' || event === 'decline') {
+    } else if (event === 'cancel' || event === 'decline' || event === 'session_timeout' || event === 'ttl_expired') {
       setStatus('cancelled')
     } else {
       setStatus('error')

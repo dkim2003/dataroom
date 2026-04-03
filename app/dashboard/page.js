@@ -202,6 +202,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const [isDragging, setIsDragging] = useState(false);
                             const [dropStatus, setDropStatus] = useState(''); // '' | 'reading' | 'sorting' | 'uploading' | 'done' | 'error'
                             const [dropStatusMessage, setDropStatusMessage] = useState('');
+                            const [dropFolder, setDropFolder] = useState(null);
+                            const [dropRestricted, setDropRestricted] = useState(false);
                             const dropZoneInputRef = useRef(null);
                             const [draggingDoc, setDraggingDoc] = useState(null);
                             const [draggingFolder, setDraggingFolder] = useState(null);
@@ -632,11 +634,45 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               }
                               const { data: { session } } = await supabase.auth.getSession();
 
-                              // Step 1: Reading
-                              setDropStatus('reading');
-                              setDropStatusMessage('Reading document...');
+                              // If inside a folder, skip Sol and upload directly to current location
+                              if (activeFolder) {
+                                const topFolder = activeFolder.split('/')[0];
+                                const isInternal = folderPaths.some(fp => fp.startsWith('internal/') && fp.split('/')[1] === topFolder);
+                                const isRestricted = dropRestricted || folderPaths.some(fp => fp.startsWith('restricted/') && fp.split('/')[1] === topFolder);
+                                const folderLabel = activeFolder.split('/').pop().replace(/_/g, ' ').replace(/^\d+\s+/, '');
+                                setDropStatus('uploading');
+                                setDropStatusMessage(`Uploading to ${folderLabel}...`);
+                                taskStart(`Uploading to ${folderLabel}...`);
+                                const uploadForm = new FormData();
+                                uploadForm.append('file', file);
+                                uploadForm.append('folder', activeFolder);
+                                uploadForm.append('isRestricted', isRestricted.toString());
+                                uploadForm.append('isInternal', isInternal.toString());
+                                const uploadResponse = await fetch('/api/upload', {
+                                  method: 'POST',
+                                  headers: { authorization: `Bearer ${session.access_token}` },
+                                  body: uploadForm
+                                });
+                                const uploadResult = await uploadResponse.json();
+                                if (uploadResult.error) {
+                                  setDropStatus('error');
+                                  setDropStatusMessage('Upload error: ' + uploadResult.error);
+                                  taskDone('Upload failed', 'error');
+                                  setTimeout(() => { setDropStatus(''); setDropStatusMessage(''); }, 4000);
+                                  return;
+                                }
+                                setDropStatus('done');
+                                setDropStatusMessage('Done.');
+                                setDropFolder(activeFolder);
+                                setDropRestricted(false);
+                                taskDone('Upload complete');
+                                await loadDocuments();
+                                await loadDiligence();
+                                setTimeout(() => { setDropStatus(''); setDropStatusMessage(''); setDropFolder(null); }, 5000);
+                                return;
+                              }
 
-                              // Step 2: Sort with Sol
+                              // Document Library — use Sol auto-sort
                               setDropStatus('sorting');
                               setDropStatusMessage('Sorting with Sol...');
                               taskStart('Sorting with Sol...');
@@ -667,8 +703,6 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
 
                               const { folder, isRestricted } = sortResult;
                               const folderLabel = folder.split('/').pop();
-
-                              // Step 3: Upload
                               setDropStatus('uploading');
                               setDropStatusMessage(`Uploading to ${folderLabel}...`);
                               taskStart(`Uploading to ${folderLabel}...`);
@@ -692,10 +726,11 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
 
                               setDropStatus('done');
                               setDropStatusMessage('Done.');
+                              setDropFolder(folder);
                               taskDone('Upload complete');
                               await loadDocuments();
                               await loadDiligence();
-                              setTimeout(() => { setDropStatus(''); setDropStatusMessage(''); }, 3000);
+                              setTimeout(() => { setDropStatus(''); setDropStatusMessage(''); setDropFolder(null); }, 5000);
                             }
 
                             async function completeTutorial() {
@@ -1168,8 +1203,9 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
           {/* Folders */}
           {(() => {
             const renderFolderItem = (folder, iconColor) => {
-              const isActive = activeFolder === folder && activeTab === 'documents';
               const isExpanded = expandedFolders.has(folder);
+              const isInSubfolder = activeFolder?.startsWith(folder + '/') && activeTab === 'documents';
+              const isActive = (activeFolder === folder && activeTab === 'documents') || (!isExpanded && isInSubfolder);
               const subs = subfolderMap[folder] ? [...subfolderMap[folder]].sort() : [];
               return (
                 <div key={folder}>
@@ -1246,22 +1282,31 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                   {isExpanded && subs.map(sub => {
                     const subPath = `${folder}/${sub}`;
                     const subActive = activeFolder === subPath && activeTab === 'documents';
+                    const isSubDragOver = dragOverFolder === subPath;
                     return (
                       <button
                         key={sub}
                         onClick={() => { setActiveFolder(subPath); setActiveTab('documents'); }}
+                        onDragOver={(e) => { if (draggingDoc || draggingFolder) { e.preventDefault(); setDragOverFolder(subPath); } }}
+                        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setDragOverFolder(null);
+                          if (draggingDoc) handleMoveDoc(draggingDoc, subPath);
+                          if (draggingFolder) handleMoveFolder(draggingFolder, subPath);
+                        }}
                         style={{
                           width: '100%', display: 'flex', alignItems: 'center', gap: '8px',
                           padding: '7px 16px 7px 36px',
-                          background: subActive ? 'rgba(255,255,255,0.04)' : 'none',
+                          background: isSubDragOver ? 'rgba(59,130,246,0.12)' : subActive ? 'rgba(255,255,255,0.04)' : 'none',
                           border: 'none',
-                          borderLeft: subActive ? '2px solid #3b82f6' : '2px solid transparent',
-                          color: subActive ? '#ddd' : '#666',
+                          borderLeft: isSubDragOver ? '2px solid #3b82f6' : subActive ? '2px solid #3b82f6' : '2px solid transparent',
+                          color: isSubDragOver ? '#3b82f6' : subActive ? '#ddd' : '#666',
                           cursor: 'pointer', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', textAlign: 'left',
                           transition: 'background 0.1s, color 0.1s',
                         }}
                       >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isSubDragOver ? '#3b82f6' : iconColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
                         </svg>
                         {sub.replace(/^\d+\s+/, '')}
@@ -1426,9 +1471,10 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                   style={{
                     border: `1px dashed ${isDragging ? '#3b82f6' : 'rgba(255,255,255,0.1)'}`,
                     borderRadius: '8px',
-                    padding: '28px',
                     textAlign: 'center',
                     marginBottom: '28px',
+                    height: '140px',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
                     background: isDragging ? 'rgba(59,130,246,0.06)' : 'rgba(255,255,255,0.02)',
                     transition: 'border-color 0.15s, background 0.15s',
                     cursor: dropStatus ? 'default' : 'pointer',
@@ -1443,13 +1489,24 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     onChange={(e) => { const file = e.target.files[0]; if (file) handleFileDrop(file); e.target.value = ''; }}
                   />
                   {dropStatus ? (
-                    <p style={{
-                      fontSize: '14px',
-                      fontFamily: 'Exo 2, sans-serif',
-                      color: dropStatus === 'error' ? '#ef4444' : dropStatus === 'done' ? '#22c55e' : '#3b82f6',
-                    }}>
-                      {dropStatusMessage}
-                    </p>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
+                      <p style={{
+                        fontSize: '14px',
+                        fontFamily: 'Exo 2, sans-serif',
+                        color: dropStatus === 'error' ? '#ef4444' : dropStatus === 'done' ? '#22c55e' : '#3b82f6',
+                        margin: 0,
+                      }}>
+                        {dropStatusMessage}
+                      </p>
+                      {dropStatus === 'done' && dropFolder && !activeFolder && (
+                        <button
+                          onClick={() => { setActiveFolder(dropFolder); setActiveTab('documents'); }}
+                          style={{ fontSize: '13px', color: '#93c5fd', background: 'none', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontFamily: 'Exo 2, sans-serif' }}
+                        >
+                          Go to folder →
+                        </button>
+                      )}
+                    </div>
                   ) : (
                     <>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
@@ -1459,8 +1516,22 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                           <line x1="12" y1="3" x2="12" y2="15"/>
                         </svg>
                         <p style={{ fontSize: '14px', color: '#555', fontFamily: 'Exo 2, sans-serif', margin: 0 }}>
-                          Drop a PDF here — Sol will sort it automatically
+                          {activeFolder ? 'Drop a PDF here — file will be added to this folder' : 'Drop a PDF here — Sol will sort it automatically'}
                         </p>
+                        {activeFolder && (() => {
+                          const topFolder = activeFolder.split('/')[0];
+                          const isAlreadyRestricted = folderPaths.some(fp => fp.startsWith('restricted/') && fp.split('/')[1] === topFolder);
+                          const isAlreadyInternal = folderPaths.some(fp => fp.startsWith('internal/') && fp.split('/')[1] === topFolder);
+                          if (isAlreadyRestricted || isAlreadyInternal) return null;
+                          return (
+                            <div onClick={(e) => { e.stopPropagation(); setDropRestricted(r => !r); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '4px' }}>
+                              <div style={{ width: '14px', height: '14px', borderRadius: '3px', border: dropRestricted ? '1px solid #a855f7' : '1px solid rgba(255,255,255,0.2)', background: dropRestricted ? '#a855f7' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.15s' }}>
+                                {dropRestricted && <svg width="9" height="9" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke="#fff" strokeWidth="1.5" strokeLinecap="round"/></svg>}
+                              </div>
+                              <span style={{ fontSize: '12px', color: dropRestricted ? '#a855f7' : '#555', fontFamily: 'Exo 2, sans-serif', transition: 'color 0.15s' }}>Post-NDA only</span>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </>
                   )}
@@ -1490,16 +1561,19 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     const folderParent = activeFolder || null;
                     const topFolder = activeFolder?.split('/')[0];
                     const isInternalContext = activeFolder && folderPaths.some(fp => fp.startsWith('internal/') && fp.split('/')[1] === topFolder);
+                    const isRestrictedContext = activeFolder && folderPaths.some(fp => fp.startsWith('restricted/') && fp.split('/')[1] === topFolder);
+                    const doCreate = () => { if (newFolderName.trim()) createFolder(folderParent, newFolderName.trim(), isRestrictedContext || newFolderAccess === 'restricted', isInternalContext || newFolderAccess === 'internal'); };
                     return creatingFolderIn === folderKey ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <input autoFocus value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && newFolderName.trim()) createFolder(folderParent, newFolderName.trim(), false, isInternalContext || newFolderAccess === 'internal'); if (e.key === 'Escape') { setCreatingFolderIn(null); setNewFolderName(''); } }} placeholder="Folder name..." style={{ padding: '7px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '160px' }} />
-                        {!isInternalContext && (
+                        <input autoFocus value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && newFolderName.trim()) doCreate(); if (e.key === 'Escape') { setCreatingFolderIn(null); setNewFolderName(''); } }} placeholder="Folder name..." style={{ padding: '7px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '160px' }} />
+                        {!isInternalContext && !isRestrictedContext && (
                           <select value={newFolderAccess} onChange={(e) => setNewFolderAccess(e.target.value)} style={{ padding: '7px 10px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '6px', color: '#aaa', fontSize: '12px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer', outline: 'none' }}>
                             <option value="public">Public</option>
+                            <option value="restricted">Restricted</option>
                             <option value="internal">Internal</option>
                           </select>
                         )}
-                        <button onClick={() => { if (newFolderName.trim()) createFolder(folderParent, newFolderName.trim(), false, isInternalContext || newFolderAccess === 'internal'); }} style={{ padding: '7px 14px', background: '#3b82f6', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Create</button>
+                        <button onClick={doCreate} style={{ padding: '7px 14px', background: '#3b82f6', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Create</button>
                         <button onClick={() => { setCreatingFolderIn(null); setNewFolderName(''); }} style={{ padding: '7px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#777', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Cancel</button>
                       </div>
                     ) : (

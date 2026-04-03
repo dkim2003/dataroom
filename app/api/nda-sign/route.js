@@ -7,7 +7,8 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-const DS_AUTH = 'https://account-d.docusign.com'
+const DS_AUTH    = 'https://account-d.docusign.com'
+const DS_SANDBOX = DS_AUTH.includes('account-d')
 
 // Build a DocuSign JWT (RS256) and exchange it for an access token.
 // Docs: https://developers.docusign.com/platform/auth/jwt/jwt-get-token/
@@ -88,10 +89,11 @@ async function getAccountInfo(accessToken) {
     if (attempt < 2) await new Promise(r => setTimeout(r, 600))
   }
   // Fall back to env vars
-  console.log('DS userinfo failed after 3 attempts — falling back to env vars')
+  const fallbackBase = process.env.DOCUSIGN_BASE_URI || (DS_SANDBOX ? 'https://demo.docusign.net' : 'https://ca.docusign.net')
+  console.log('DS userinfo failed after 3 attempts — falling back to env vars, baseUri:', fallbackBase)
   return {
     accountId: process.env.DOCUSIGN_ACCOUNT_ID,
-    baseUri: 'https://demo.docusign.net'
+    baseUri: fallbackBase
   }
 }
 
