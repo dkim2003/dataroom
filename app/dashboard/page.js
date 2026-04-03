@@ -121,7 +121,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <SolDot taskToast={taskToast} />
           <span style={{ fontSize: '15px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>SOL</span>
-          <span style={{ fontSize: '13px', color: '#777', marginLeft: 'auto' }}>AI Assistant</span>
+          <span style={{ fontSize: '13px', color: '#777', marginLeft: 'auto' }}>ask me anything!</span>
         </div>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '18px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -1337,7 +1337,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
   }, {});
 
   return (
-    <div style={{ fontFamily: 'Exo 2, sans-serif', background: '#080808', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ fontFamily: 'Exo 2, sans-serif', background: '#080808', minHeight: '100vh', display: 'flex', flexDirection: 'column', zoom: 1.2 }}>
 
       {/* Top bar */}
       <div style={{ height: '56px', background: '#0a0a0a', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', flexShrink: 0, zIndex: 10 }}>
