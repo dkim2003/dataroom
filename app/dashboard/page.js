@@ -361,17 +361,6 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               return () => document.removeEventListener('click', close);
                             }, [privateItemMenuId]);
 
-                            // Reload private data whenever the private tab becomes active
-                            useEffect(() => {
-                              if (activeTab === 'private' && profile) {
-                                const isEmp = profile.role === 'pre_nda_employee' || profile.role === 'post_nda_employee';
-                                const isAdm = user?.email === ADMIN_EMAIL || profile.is_admin === true;
-                                if (isEmp || isAdm) {
-                                  loadPrivateFiles(selectedPrivateUserId, privateActiveSubfolder);
-                                  if (!selectedPrivateUserId) loadPrivateItems();
-                                }
-                              }
-                            }, [activeTab]);
 
                             async function renderPdfThumbnail(url, path) {
                               const tryRender = async (retries = 6) => {
@@ -1745,18 +1734,26 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                 {/* Private workspace — employees and admin only */}
                 {(isEmployee || isAdmin) && (<>
                 <div style={{ margin: '16px 16px 6px', borderTop: '1px solid rgba(255,255,255,0.05)' }} />
-                <button
-                  onClick={() => { setActiveTab('private'); setActiveFolder(null); setPrivateActiveSubfolder(null); setPrivateOpen(o => !o); }}
-                  style={{
-                    width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '0 16px', marginBottom: '6px', background: 'none',
-                    border: 'none', borderLeft: activeTab === 'private' && !privateActiveSubfolder ? '2px solid #a855f7' : '2px solid transparent',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <p style={{ fontSize: '11px', fontWeight: '600', color: '#a855f7', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', margin: 0 }}>PRIVATE</p>
-                  <span style={{ fontSize: '18px', color: '#a855f7', display: 'inline-flex', alignItems: 'center', lineHeight: 1, transform: privateOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>›</span>
-                </button>
+                <div style={{
+                  display: 'flex', alignItems: 'center',
+                  borderLeft: activeTab === 'private' && !privateActiveSubfolder ? '2px solid #a855f7' : '2px solid transparent',
+                  marginBottom: '6px',
+                }}>
+                  {/* Label — switches to private tab */}
+                  <button
+                    onClick={() => { setActiveTab('private'); setActiveFolder(null); setPrivateActiveSubfolder(null); setPrivateOpen(true); loadPrivateFiles(null, null); loadPrivateItems(); }}
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', padding: '0 8px 0 14px', background: 'none', border: 'none', cursor: 'pointer' }}
+                  >
+                    <p style={{ fontSize: '11px', fontWeight: '600', color: '#a855f7', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', margin: 0 }}>PRIVATE</p>
+                  </button>
+                  {/* Arrow — only toggles expand/collapse */}
+                  <button
+                    onClick={e => { e.stopPropagation(); setPrivateOpen(o => !o); }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px 14px 4px 4px', color: '#a855f7', fontSize: '18px', lineHeight: 1, display: 'inline-flex', alignItems: 'center' }}
+                  >
+                    <span style={{ display: 'inline-flex', alignItems: 'center', transform: privateOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>›</span>
+                  </button>
+                </div>
                 {privateOpen && privateSubfolders.map(subObj => {
                   const subName = subObj?.name ?? subObj;
                   const subActive = activeTab === 'private' && privateActiveSubfolder === subName;
