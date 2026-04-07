@@ -91,7 +91,7 @@ function SolDot({ taskToast }) {
         <circle cx={cx} cy={cy} r={r} fill="none" stroke="#22c55e" strokeWidth="2"
           strokeDasharray={`${circ * 0.65} ${circ * 0.35}`}
           strokeLinecap="round"
-          style={{ transformOrigin: `${cx}px ${cy}px`, animation: 'spin 0.9s linear infinite' }}/>
+          style={{ transformBox: 'fill-box', transformOrigin: 'center', animation: 'spin 0.9s linear infinite' }}/>
       </>}
       {taskToast?.status === 'success' && <>
         <circle cx={cx} cy={cy} r={r} fill="none" stroke="#22c55e" strokeWidth="2"/>
@@ -270,7 +270,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const [renamePrivateFileValue, setRenamePrivateFileValue] = useState('');
                             const [privateOpen, setPrivateOpen] = useState(true);
                             const [privateActiveSubfolder, setPrivateActiveSubfolder] = useState(null);
-                            const [privateSubfolders, setPrivateSubfolders] = useState([]);
+                            const [privateSubfolderMap, setPrivateSubfolderMap] = useState({});
+                            const [expandedPrivateFolders, setExpandedPrivateFolders] = useState(new Set());
                             const [creatingPrivateFolder, setCreatingPrivateFolder] = useState(false);
                             const [newPrivateFolderName, setNewPrivateFolderName] = useState('');
                             const [privateDocView, setPrivateDocView] = useState('list');
@@ -317,6 +318,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                   loadLinks(),
                                   loadPrivateItems(),
                                   loadPrivateFiles(null),
+                                  loadPrivateFolderTree(null),
                                   fetch('/api/folder-order').then(r => r.json()).then(d => { if (d.order?.length) setFolderOrder(d.order); }),
                                   fetch('/api/folder-names', { headers: { authorization: `Bearer ${session.access_token}` } }).then(r => r.json()).then(d => { if (d.names) setFolderNames(d.names); }),
                                   adminCheck ? fetch('/api/admin/profiles', { headers: { authorization: `Bearer ${session.access_token}` } }).then(r => r.json()).then(d => { if (d.profiles) setAllProfiles(d.profiles); }) : Promise.resolve()
@@ -741,8 +743,27 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               const res = await fetch(`/api/private-files${qs ? '?' + qs : ''}`, { headers: { authorization: `Bearer ${session.access_token}` } });
                               const result = await res.json();
                               if (result.files) setPrivateFiles(result.files);
-                              if (result.subfolders !== undefined) setPrivateSubfolders(result.subfolders);
                               setPrivateFilesLoading(false);
+                            }
+
+                            async function loadPrivateFolderTree(userId) {
+                              const { data: { session } } = await supabase.auth.getSession();
+                              const params = new URLSearchParams();
+                              if (userId) params.set('userId', userId);
+                              params.set('recursive', 'true');
+                              const res = await fetch(`/api/private-files?${params}`, { headers: { authorization: `Bearer ${session.access_token}` } });
+                              const result = await res.json();
+                              if (result.folderPaths) {
+                                const map = {};
+                                result.folderPaths.forEach(fp => {
+                                  const parts = fp.split('/');
+                                  const parentPath = parts.slice(0, -1).join('/');
+                                  const childName = parts[parts.length - 1];
+                                  if (!map[parentPath]) map[parentPath] = new Set();
+                                  map[parentPath].add(childName);
+                                });
+                                setPrivateSubfolderMap(map);
+                              }
                             }
 
                             async function deletePrivateFile(path) {
@@ -784,27 +805,6 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               setTimeout(() => { setPrivateDropStatus(''); setPrivateDropMessage(''); }, 3000);
                             }
 
-                            async function createPrivateFolder() {
-                              const name = newPrivateFolderName.trim();
-                              if (!name) return;
-                              setCreatingPrivateFolder(false);
-                              setNewPrivateFolderName('');
-                              const { data: { session } } = await supabase.auth.getSession();
-                              taskStart('Creating folder...');
-                              const res = await fetch('/api/private-files', {
-                                method: 'POST',
-                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ folderName: name, userId: selectedPrivateUserId || undefined })
-                              });
-                              const result = await res.json();
-                              if (!result.error) {
-                                setPrivateSubfolders(prev => [...prev, name]);
-                                taskDone('Folder created');
-                              } else {
-                                taskDone('Failed to create folder', 'error');
-                              }
-                            }
-
                             async function renamePrivateFile(file, newName) {
                               const trimmed = newName.trim();
                               setRenamingPrivateFilePath(null);
@@ -832,20 +832,120 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               if (!name) return;
                               setCreatingPrivateFolder(false);
                               setNewPrivateFolderName('');
+                              const fullPath = privateActiveSubfolder ? `${privateActiveSubfolder}/${name}` : name;
                               const { data: { session } } = await supabase.auth.getSession();
                               taskStart('Creating folder...');
                               const res = await fetch('/api/private-files', {
                                 method: 'POST',
                                 headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ folderName: name, userId: selectedPrivateUserId || undefined })
+                                body: JSON.stringify({ folderName: fullPath, userId: selectedPrivateUserId || undefined })
                               });
                               const result = await res.json();
                               if (!result.error) {
                                 taskDone('Folder created');
-                                await loadPrivateFiles(selectedPrivateUserId, null);
+                                await loadPrivateFolderTree(selectedPrivateUserId);
                               } else {
                                 taskDone('Failed to create folder', 'error');
                               }
+                            }
+
+                            async function renamePrivateSubfolder(oldPath, newName) {
+                              const trimmed = newName.trim();
+                              if (!trimmed) return;
+                              const parts = oldPath.split('/');
+                              const newPath = [...parts.slice(0, -1), trimmed].join('/');
+                              if (newPath === oldPath) return;
+                              taskStart('Renaming folder...');
+                              const { data: { session } } = await supabase.auth.getSession();
+                              const userId = selectedPrivateUserId || user.id;
+
+                              // Get all folder paths under oldPath (including oldPath itself)
+                              const treeParams = new URLSearchParams();
+                              if (selectedPrivateUserId) treeParams.set('userId', selectedPrivateUserId);
+                              treeParams.set('recursive', 'true');
+                              const treeRes = await fetch(`/api/private-files?${treeParams}`, { headers: { authorization: `Bearer ${session.access_token}` } });
+                              const treeResult = await treeRes.json();
+                              const allFolderPaths = [oldPath, ...(treeResult.folderPaths || []).filter(fp => fp.startsWith(oldPath + '/'))];
+
+                              // Move files in every folder (direct files only per folder — combined covers all depths)
+                              for (const folderPath of allFolderPaths) {
+                                const params = new URLSearchParams();
+                                if (selectedPrivateUserId) params.set('userId', selectedPrivateUserId);
+                                params.set('subfolder', folderPath);
+                                const res = await fetch(`/api/private-files?${params}`, { headers: { authorization: `Bearer ${session.access_token}` } });
+                                const result = await res.json();
+                                for (const f of (result.files || [])) {
+                                  const relFolder = f.path.split('/').slice(2, -1).join('/');
+                                  const newRelFolder = newPath + relFolder.slice(oldPath.length);
+                                  const newFilePath = `private/${userId}/${newRelFolder}/${f.path.split('/').pop()}`;
+                                  await fetch('/api/private-files', {
+                                    method: 'PATCH',
+                                    headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ path: f.path, newPath: newFilePath })
+                                  });
+                                }
+                                // Recreate .keep at new path
+                                const newFolderPath = newPath + folderPath.slice(oldPath.length);
+                                await fetch('/api/private-files', {
+                                  method: 'POST',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ folderName: newFolderPath, userId: selectedPrivateUserId || undefined })
+                                });
+                                // Delete old .keep
+                                await fetch('/api/private-files', {
+                                  method: 'DELETE',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ path: `private/${userId}/${folderPath}/.keep` })
+                                });
+                              }
+
+                              if (privateActiveSubfolder === oldPath || privateActiveSubfolder?.startsWith(oldPath + '/')) {
+                                setPrivateActiveSubfolder(newPath + (privateActiveSubfolder || '').slice(oldPath.length));
+                              }
+                              await loadPrivateFolderTree(selectedPrivateUserId);
+                              taskDone('Folder renamed');
+                            }
+
+                            async function deletePrivateSubfolder(subPath) {
+                              taskStart('Deleting folder...');
+                              const { data: { session } } = await supabase.auth.getSession();
+                              const userId = selectedPrivateUserId || user.id;
+
+                              // Get all nested folder paths (including subPath itself)
+                              const treeParams = new URLSearchParams();
+                              if (selectedPrivateUserId) treeParams.set('userId', selectedPrivateUserId);
+                              treeParams.set('recursive', 'true');
+                              const treeRes = await fetch(`/api/private-files?${treeParams}`, { headers: { authorization: `Bearer ${session.access_token}` } });
+                              const treeResult = await treeRes.json();
+                              const allFolderPaths = [subPath, ...(treeResult.folderPaths || []).filter(fp => fp.startsWith(subPath + '/'))];
+
+                              // Delete files and .keep in every folder
+                              for (const folderPath of allFolderPaths) {
+                                const params = new URLSearchParams();
+                                if (selectedPrivateUserId) params.set('userId', selectedPrivateUserId);
+                                params.set('subfolder', folderPath);
+                                const res = await fetch(`/api/private-files?${params}`, { headers: { authorization: `Bearer ${session.access_token}` } });
+                                const result = await res.json();
+                                for (const f of (result.files || [])) {
+                                  await fetch('/api/private-files', {
+                                    method: 'DELETE',
+                                    headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ path: f.path })
+                                  });
+                                }
+                                await fetch('/api/private-files', {
+                                  method: 'DELETE',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ path: `private/${userId}/${folderPath}/.keep` })
+                                });
+                              }
+
+                              if (privateActiveSubfolder === subPath || privateActiveSubfolder?.startsWith(subPath + '/')) {
+                                setPrivateActiveSubfolder(null);
+                                await loadPrivateFiles(selectedPrivateUserId, null);
+                              }
+                              await loadPrivateFolderTree(selectedPrivateUserId);
+                              taskDone('Folder deleted');
                             }
 
                             async function renameLink(id, newName) {
@@ -1239,11 +1339,13 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               a.click();
                             }
 
-                            async function moveFolderToTrash(topFolder, sub) {
+                            async function moveFolderToTrash(folderPath) {
+                              // folderPath = 'TopFolder/Sub' or 'TopFolder/Sub/NestedSub' (no prefix)
                               taskStart('Moving folder to trash...');
                               const folderDocs = documents.filter(doc => {
                                 const p = doc.path.split('/');
-                                return p[1] === topFolder && p[2] === sub;
+                                const docFolder = p.slice(1, -1).join('/');
+                                return docFolder === folderPath || docFolder.startsWith(folderPath + '/');
                               });
                               const { data: { session } } = await supabase.auth.getSession();
                               for (const doc of folderDocs) {
@@ -1253,14 +1355,20 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                   body: JSON.stringify({ path: doc.path, fileName: doc.name })
                                 });
                               }
-                              // Delete the .keep placeholder so the folder disappears
-                              const folderFullPath = folderPaths.find(fp => fp.includes(`/${topFolder}/${sub}`));
-                              if (folderFullPath) {
+                              // Delete all .keep placeholders for this folder and its subfolders
+                              const matchingPaths = folderPaths.filter(fp => {
+                                const noPrefix = fp.split('/').slice(1).join('/');
+                                return noPrefix === folderPath || noPrefix.startsWith(folderPath + '/');
+                              });
+                              for (const fp of matchingPaths) {
                                 await fetch('/api/folders', {
                                   method: 'DELETE',
                                   headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ keepPath: `${folderFullPath}/.keep` })
+                                  body: JSON.stringify({ keepPath: `${fp}/.keep` })
                                 });
+                              }
+                              if (activeFolder === folderPath || activeFolder?.startsWith(folderPath + '/')) {
+                                setActiveFolder(folderPath.split('/').slice(0, -1).join('/') || null);
                               }
                               await loadDocuments();
                               taskDone('Moved to trash');
@@ -1302,37 +1410,52 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               setRenamingFolderPath(null);
                               if (!trimmed || trimmed === oldSub) return;
                               taskStart('Renaming folder...');
+                              const oldFullPath = `${topFolder}/${oldSub}`;
+                              const newFullPath = `${topFolder}/${trimmed}`;
                               // Optimistic update
                               setDocuments(prev => prev.map(d => {
                                 const p = d.path.split('/');
-                                if (p[1] === topFolder && p[2] === oldSub) { p[2] = trimmed; return { ...d, path: p.join('/') }; }
+                                const docFolder = p.slice(1, -1).join('/');
+                                if (docFolder === oldFullPath || docFolder.startsWith(oldFullPath + '/')) {
+                                  const newDocFolder = newFullPath + docFolder.slice(oldFullPath.length);
+                                  return { ...d, path: p[0] + '/' + newDocFolder + '/' + p[p.length - 1] };
+                                }
                                 return d;
                               }));
                               setFolderPaths(prev => prev.map(fp => {
                                 const parts = fp.split('/');
-                                if (parts.length >= 3 && parts[1] === topFolder && parts[2] === oldSub) { parts[2] = trimmed; return parts.join('/'); }
+                                const noPrefix = parts.slice(1).join('/');
+                                if (noPrefix === oldFullPath || noPrefix.startsWith(oldFullPath + '/')) {
+                                  return parts[0] + '/' + newFullPath + noPrefix.slice(oldFullPath.length);
+                                }
                                 return fp;
                               }));
-                              if (activeFolder === `${topFolder}/${oldSub}`) setActiveFolder(`${topFolder}/${trimmed}`);
+                              if (activeFolder === oldFullPath || activeFolder?.startsWith(oldFullPath + '/')) {
+                                setActiveFolder(newFullPath + (activeFolder || '').slice(oldFullPath.length));
+                              }
                               // API calls (use original documents/folderPaths captured before state updates)
                               const folderDocs = documents.filter(doc => {
                                 const p = doc.path.split('/');
-                                return p[1] === topFolder && p[2] === oldSub;
+                                const docFolder = p.slice(1, -1).join('/');
+                                return docFolder === oldFullPath || docFolder.startsWith(oldFullPath + '/');
                               });
-                              const folderFullPath = folderPaths.find(fp => fp.includes(`/${topFolder}/${oldSub}`));
+                              const folderFullPath = folderPaths.find(fp => fp.split('/').slice(1).join('/') === oldFullPath);
                               const { data: { session } } = await supabase.auth.getSession();
                               for (const doc of folderDocs) {
                                 const p = doc.path.split('/');
-                                p[2] = trimmed;
+                                const docFolder = p.slice(1, -1).join('/');
+                                const newDocFolder = newFullPath + docFolder.slice(oldFullPath.length);
+                                const newPath = p[0] + '/' + newDocFolder + '/' + p[p.length - 1];
                                 await fetch('/api/documents/move', {
                                   method: 'POST',
                                   headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ oldPath: doc.path, newPath: p.join('/') })
+                                  body: JSON.stringify({ oldPath: doc.path, newPath })
                                 });
                               }
                               // Move the .keep placeholder
                               if (folderFullPath) {
                                 const isRestricted = folderFullPath.startsWith('restricted');
+                                const isInternal = folderFullPath.startsWith('internal');
                                 await fetch('/api/folders', {
                                   method: 'DELETE',
                                   headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
@@ -1341,7 +1464,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 await fetch('/api/folders', {
                                   method: 'POST',
                                   headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ folderPath: `${topFolder}/${trimmed}`, isRestricted })
+                                  body: JSON.stringify({ folderPath: newFullPath, isRestricted, isInternal })
                                 });
                               }
                               taskDone('Folder renamed');
@@ -1424,34 +1547,41 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
   const publicFolders = folders.filter(f => !internalFolderNames.has(f));
   const internalFolders = folders.filter(f => internalFolderNames.has(f));
 
-  // Build subfolder map from folderPaths (includes empty folders)
-  // path format: general/01_Pitch_and_Overview/Executive Summary
+  // Build subfolder map from folderPaths (includes empty folders, all depths)
+  // Key = parent path without prefix (e.g. 'TopFolder' or 'TopFolder/Sub')
+  // Value = Set of direct child names
   const subfolderMap = {};
   folderPaths.forEach(fp => {
     const parts = fp.split('/');
-    if (parts.length === 3) {
-      const top = parts[1];
-      const sub = parts[2];
-      if (!subfolderMap[top]) subfolderMap[top] = new Set();
-      subfolderMap[top].add(sub);
+    // parts[0] = prefix (general/restricted/internal), parts[1..] = folder path
+    if (parts.length >= 3) {
+      const parentPath = parts.slice(1, -1).join('/'); // parent without prefix
+      const childName = parts[parts.length - 1];
+      if (!subfolderMap[parentPath]) subfolderMap[parentPath] = new Set();
+      subfolderMap[parentPath].add(childName);
     }
   });
+
+  // Investors cannot see internal documents at all
+  const visibleDocuments = (isEmployee || isAdmin) ? documents : documents.filter(doc => !doc.internal);
 
   const filteredDocs = activeFolder
     ? (() => {
         if (activeFolder.includes('/')) {
-          const [top, sub] = activeFolder.split('/');
-          return documents.filter(doc => {
+          // Subfolder at any depth: only files directly inside this folder
+          return visibleDocuments.filter(doc => {
             const p = doc.path.split('/');
-            return p[1] === top && p[2] === sub;
+            const docFolder = p.slice(1, -1).join('/');
+            return docFolder === activeFolder;
           });
         }
-        return documents.filter(doc => {
+        // Top-level folder: only direct files (not files inside subfolders)
+        return visibleDocuments.filter(doc => {
           const p = doc.path.split('/');
           return p[1] === activeFolder && p.length === 3;
         });
       })()
-    : documents;
+    : visibleDocuments;
 
   const filteredLinks = activeFolder
     ? links.filter(l => l.folder === activeFolder && l.folder !== '__private__')
@@ -1578,6 +1708,47 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
 
           {/* Folders */}
           {(() => {
+            // Recursive subfolder renderer for sidebar
+            const renderSubFolders = (parentPath, depth, iconColor) => {
+              const subs = subfolderMap[parentPath] ? [...subfolderMap[parentPath]].sort() : [];
+              return subs.map(sub => {
+                const subPath = `${parentPath}/${sub}`;
+                const subActive = activeFolder === subPath && activeTab === 'documents';
+                const isSubDragOver = dragOverFolder === subPath;
+                const isSubExpanded = expandedFolders.has(subPath);
+                const hasChildren = subfolderMap[subPath]?.size > 0;
+                const indent = 22 + depth * 14;
+                return (
+                  <div key={subPath}>
+                    <div
+                      style={{ display: 'flex', alignItems: 'center', background: isSubDragOver ? 'rgba(59,130,246,0.12)' : subActive ? 'rgba(255,255,255,0.04)' : 'none', borderLeft: isSubDragOver ? '2px solid #3b82f6' : subActive ? '2px solid #3b82f6' : '2px solid transparent', transition: 'background 0.1s' }}
+                      onDragOver={(e) => { if (draggingDoc || draggingFolder) { e.preventDefault(); setDragOverFolder(subPath); } }}
+                      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); }}
+                      onDrop={(e) => { e.preventDefault(); setDragOverFolder(null); if (draggingDoc) handleMoveDoc(draggingDoc, subPath); if (draggingFolder) handleMoveFolder(draggingFolder, subPath); }}
+                    >
+                      <button
+                        onClick={() => { setActiveFolder(subPath); setActiveTab('documents'); }}
+                        onContextMenu={(isEmployee || isAdmin) ? (e) => { e.preventDefault(); const zoom = 1.2; setContextMenu({ type: 'sub', folderPath: subPath, x: e.clientX / zoom, y: e.clientY / zoom }); } : undefined}
+                        style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px', padding: `7px 8px 7px ${indent}px`, background: 'none', border: 'none', color: isSubDragOver ? '#3b82f6' : subActive ? '#ddd' : '#666', cursor: 'pointer', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', textAlign: 'left', transition: 'color 0.1s' }}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isSubDragOver ? '#3b82f6' : subActive ? '#ddd' : iconColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                        </svg>
+                        {sub.replace(/^\d+\s+/, '')}
+                      </button>
+                      {hasChildren && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setExpandedFolders(prev => { const n = new Set(prev); n.has(subPath) ? n.delete(subPath) : n.add(subPath); return n; }); }}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: subActive ? '#aaa' : '#555', padding: '7px 12px 7px 4px', lineHeight: 1, fontSize: '16px', transition: 'transform 0.2s, color 0.1s', transform: isSubExpanded ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-flex', alignItems: 'center' }}
+                        >›</button>
+                      )}
+                    </div>
+                    {isSubExpanded && renderSubFolders(subPath, depth + 1, iconColor)}
+                  </div>
+                );
+              });
+            };
+
             const renderFolderItem = (folder, iconColor) => {
               const isExpanded = expandedFolders.has(folder);
               const isInSubfolder = activeFolder?.startsWith(folder + '/') && activeTab === 'documents';
@@ -1666,40 +1837,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                       >›</button>
                     )}
                   </div>
-                  {isExpanded && subs.map(sub => {
-                    const subPath = `${folder}/${sub}`;
-                    const subActive = activeFolder === subPath && activeTab === 'documents';
-                    const isSubDragOver = dragOverFolder === subPath;
-                    return (
-                      <button
-                        key={sub}
-                        onClick={() => { setActiveFolder(subPath); setActiveTab('documents'); }}
-                        onDragOver={(e) => { if (draggingDoc || draggingFolder) { e.preventDefault(); setDragOverFolder(subPath); } }}
-                        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); }}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          setDragOverFolder(null);
-                          if (draggingDoc) handleMoveDoc(draggingDoc, subPath);
-                          if (draggingFolder) handleMoveFolder(draggingFolder, subPath);
-                        }}
-                        style={{
-                          width: '100%', display: 'flex', alignItems: 'center', gap: '8px',
-                          padding: '7px 16px 7px 36px',
-                          background: isSubDragOver ? 'rgba(59,130,246,0.12)' : subActive ? 'rgba(255,255,255,0.04)' : 'none',
-                          border: 'none',
-                          borderLeft: isSubDragOver ? '2px solid #3b82f6' : subActive ? '2px solid #3b82f6' : '2px solid transparent',
-                          color: isSubDragOver ? '#3b82f6' : subActive ? '#ddd' : '#666',
-                          cursor: 'pointer', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', textAlign: 'left',
-                          transition: 'background 0.1s, color 0.1s',
-                        }}
-                      >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isSubDragOver ? '#3b82f6' : iconColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-                        </svg>
-                        {sub.replace(/^\d+\s+/, '')}
-                      </button>
-                    );
-                  })}
+                  {isExpanded && renderSubFolders(folder, 1, iconColor)}
                 </div>
               );
             };
@@ -1754,30 +1892,52 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     <span style={{ display: 'inline-flex', alignItems: 'center', transform: privateOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>›</span>
                   </button>
                 </div>
-                {privateOpen && privateSubfolders.map(subObj => {
-                  const subName = subObj?.name ?? subObj;
-                  const subActive = activeTab === 'private' && privateActiveSubfolder === subName;
-                  return (
-                    <button
-                      key={subName}
-                      onClick={() => { setActiveTab('private'); setPrivateActiveSubfolder(subName); setActiveFolder(null); loadPrivateFiles(selectedPrivateUserId, subName); }}
-                      style={{
-                        width: '100%', display: 'flex', alignItems: 'center', gap: '8px',
-                        padding: '7px 16px 7px 32px',
-                        background: subActive ? 'rgba(255,255,255,0.04)' : 'none',
-                        border: 'none', borderLeft: subActive ? '2px solid #a855f7' : '2px solid transparent',
-                        color: subActive ? '#c084fc' : '#666',
-                        cursor: 'pointer', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', textAlign: 'left',
-                        transition: 'background 0.1s, color 0.1s',
-                      }}
-                    >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-                      </svg>
-                      {subName}
-                    </button>
-                  );
-                })}
+                {privateOpen && (() => {
+                  const renderPrivateSubFolders = (parentPath, depth) => {
+                    const subs = privateSubfolderMap[parentPath] ? [...privateSubfolderMap[parentPath]].sort() : [];
+                    return subs.map(sub => {
+                      const subPath = parentPath ? `${parentPath}/${sub}` : sub;
+                      const subActive = activeTab === 'private' && privateActiveSubfolder === subPath;
+                      const isExpanded = expandedPrivateFolders.has(subPath);
+                      const hasChildren = privateSubfolderMap[subPath]?.size > 0;
+                      const indent = 32 + depth * 14;
+                      return (
+                        <div key={subPath}>
+                          <div style={{ display: 'flex', alignItems: 'center' }}>
+                            <button
+                              onClick={() => { setActiveTab('private'); setPrivateActiveSubfolder(subPath); setActiveFolder(null); loadPrivateFiles(selectedPrivateUserId, subPath); }}
+                              onContextMenu={(e) => { e.preventDefault(); const zoom = 1.2; setContextMenu({ type: 'private-sub', sub: subPath, x: e.clientX / zoom, y: e.clientY / zoom }); }}
+                              style={{
+                                flex: 1, display: 'flex', alignItems: 'center', gap: '8px',
+                                padding: `7px 16px 7px ${indent}px`,
+                                background: subActive ? 'rgba(255,255,255,0.04)' : 'none',
+                                border: 'none', borderLeft: subActive ? '2px solid #a855f7' : '2px solid transparent',
+                                color: subActive ? '#c084fc' : '#666',
+                                cursor: 'pointer', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', textAlign: 'left',
+                                transition: 'background 0.1s, color 0.1s',
+                              }}
+                            >
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                              </svg>
+                              {sub}
+                            </button>
+                            {hasChildren && (
+                              <button
+                                onClick={e => { e.stopPropagation(); setExpandedPrivateFolders(prev => { const next = new Set(prev); if (next.has(subPath)) next.delete(subPath); else next.add(subPath); return next; }); }}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#666', padding: '4px 8px 4px 4px', fontSize: '16px', lineHeight: 1 }}
+                              >
+                                <span style={{ display: 'inline-flex', alignItems: 'center', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>›</span>
+                              </button>
+                            )}
+                          </div>
+                          {isExpanded && renderPrivateSubFolders(subPath, depth + 1)}
+                        </div>
+                      );
+                    });
+                  };
+                  return renderPrivateSubFolders('', 0);
+                })()}
                 </>)}
 
                 {/* Recently Deleted */}
@@ -1793,7 +1953,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                         e.preventDefault();
                         setDragOverTrash(false);
                         if (draggingDoc) { moveToTrash(draggingDoc.path, draggingDoc.name); setDraggingDoc(null); }
-                        else if (draggingFolder) { moveFolderToTrash(draggingFolder.topFolder, draggingFolder.sub); setDraggingFolder(null); }
+                        else if (draggingFolder) { moveFolderToTrash(`${draggingFolder.topFolder}/${draggingFolder.sub}`); setDraggingFolder(null); }
                         else if (reorderingFolder) { moveTopFolderToTrash(reorderingFolder); setReorderingFolder(null); }
                         setDragOverFolder(null);
                       }}
@@ -2036,7 +2196,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
 
               {docsLoading ? (
                 <p style={{ fontSize: '14px', color: '#777' }}>Loading documents...</p>
-              ) : Object.keys(groupedDocs).length === 0 && !(activeFolder && !activeFolder.includes('/') && subfolderMap[activeFolder]?.size > 0) ? (
+              ) : Object.keys(groupedDocs).length === 0 && !(activeFolder && subfolderMap[activeFolder]?.size > 0) ? (
                 <>
                   {filteredLinks.length === 0 && <p style={{ fontSize: '14px', color: '#777' }}>No documents available yet.</p>}
                   {filteredLinks.length > 0 && (
@@ -2071,7 +2231,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     </div>
                   )}
                 </>
-              ) : Object.keys(groupedDocs).length === 0 && activeFolder && !activeFolder.includes('/') && subfolderMap[activeFolder]?.size > 0 ? (() => {
+              ) : Object.keys(groupedDocs).length === 0 && activeFolder && subfolderMap[activeFolder]?.size > 0 ? (() => {
                 const subs = [...subfolderMap[activeFolder]].sort();
                 return (
                   <>
@@ -2109,7 +2269,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                         <button onClick={() => { setOpenFolderMenu(null); setActiveFolder(folderPath); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
                                         {(isEmployee || isAdmin) && <button onClick={() => { setOpenFolderMenu(null); downloadFolder(activeFolder, sub); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Download</button>}
                                         {(isEmployee || isAdmin) && <button onClick={() => { setOpenFolderMenu(null); setRenamingFolderPath(folderPath); setRenameFolderValue(sub.replace(/^\d+\s+/, '')); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>}
-                                        {(isEmployee || isAdmin) && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenFolderMenu(null); if (confirm(`Move "${sub.replace(/^\d+\s+/, '')}" and all its contents to trash?`)) moveFolderToTrash(activeFolder, sub); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Move to trash</button></>}
+                                        {(isEmployee || isAdmin) && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenFolderMenu(null); if (confirm(`Move "${sub.replace(/^\d+\s+/, '')}" and all its contents to trash?`)) moveFolderToTrash(`${activeFolder}/${sub}`); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Move to trash</button></>}
                                       </div>
                                     )}
                                   </div>
@@ -2150,7 +2310,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                           <button onClick={() => { setOpenFolderMenu(null); setActiveFolder(folderPath); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
                                           {(isEmployee || isAdmin) && <button onClick={() => { setOpenFolderMenu(null); downloadFolder(activeFolder, sub); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Download</button>}
                                           {(isEmployee || isAdmin) && <button onClick={() => { setOpenFolderMenu(null); setRenamingFolderPath(folderPath); setRenameFolderValue(sub.replace(/^\d+\s+/, '')); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>}
-                                          {(isEmployee || isAdmin) && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenFolderMenu(null); if (confirm(`Move "${sub.replace(/^\d+\s+/, '')}" and all its contents to trash?`)) moveFolderToTrash(activeFolder, sub); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Move to trash</button></>}
+                                          {(isEmployee || isAdmin) && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenFolderMenu(null); if (confirm(`Move "${sub.replace(/^\d+\s+/, '')}" and all its contents to trash?`)) moveFolderToTrash(`${activeFolder}/${sub}`); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Move to trash</button></>}
                                         </div>
                                       )}
                                     </div>
@@ -2214,7 +2374,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                       draggable={canEdit && !isMoving && !isRenaming}
                       onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingDoc(doc); }}
                       onDragEnd={() => { setDraggingDoc(null); setDragOverFolder(null); }}
-                      style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: isMoving ? 'rgba(59,130,246,0.06)' : 'rgba(255,255,255,0.02)', border: `1px solid ${isMoving ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)'}`, borderRadius: '6px', opacity: isMoving ? 0.6 : 1, cursor: isMoving ? 'default' : 'pointer', transition: 'opacity 0.15s' }}
+                      style={{ display: 'grid', gridTemplateColumns: (isEmployee || isAdmin) ? '1fr 180px 120px 40px' : '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: isMoving ? 'rgba(59,130,246,0.06)' : 'rgba(255,255,255,0.02)', border: `1px solid ${isMoving ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)'}`, borderRadius: '6px', opacity: isMoving ? 0.6 : 1, cursor: isMoving ? 'default' : 'pointer', transition: 'opacity 0.15s' }}
                     >
                       {/* Name column */}
                       <div onClick={() => !isRenaming && openDocument(doc.path, doc.name)} style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
@@ -2230,6 +2390,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                       <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>
                         {isMoving ? <span style={{ color: '#3b82f6' }}>Moving...</span> : lastOpened ? `${new Date(lastOpened).toLocaleDateString(undefined, { day: '2-digit', month: 'short' })} ${new Date(lastOpened).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}` : '—'}
                       </span>
+                      {/* Date Created column — employees/admin only */}
+                      {(isEmployee || isAdmin) && <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{doc.createdAt ? new Date(doc.createdAt).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</span>}
                       {/* Actions column */}
                       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                         {!isMoving && !isRenaming && (
@@ -2362,9 +2524,10 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                   </>
                 ) : (
                   <>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: (isEmployee || isAdmin) ? '1fr 180px 120px 40px' : '1fr 180px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                       <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>NAME</span>
                       <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>LAST OPENED</span>
+                      {(isEmployee || isAdmin) && <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>DATE CREATED</span>}
                       <span />
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
@@ -2375,7 +2538,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                 );
               })() : (
                 <>
-                {activeFolder && !activeFolder.includes('/') && subfolderMap[activeFolder]?.size > 0 && (
+                {activeFolder && subfolderMap[activeFolder]?.size > 0 && (
                   <div style={{ marginBottom: '24px' }}>
                     <p style={{ fontSize: '12px', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', marginBottom: '10px' }}>SUBFOLDERS</p>
                     {docView === 'grid' ? (
@@ -2412,7 +2575,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                         <button onClick={() => { setOpenFolderMenu(null); setActiveFolder(folderPath); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
                                         {(isEmployee || isAdmin) && <button onClick={() => { setOpenFolderMenu(null); downloadFolder(activeFolder, sub); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Download</button>}
                                         {(isEmployee || isAdmin) && <button onClick={() => { setOpenFolderMenu(null); setRenamingFolderPath(folderPath); setRenameFolderValue(sub.replace(/^\d+\s+/, '')); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>}
-                                        {(isEmployee || isAdmin) && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenFolderMenu(null); if (confirm(`Move "${sub.replace(/^\d+\s+/, '')}" and all its contents to trash?`)) moveFolderToTrash(activeFolder, sub); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Move to trash</button></>}
+                                        {(isEmployee || isAdmin) && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenFolderMenu(null); if (confirm(`Move "${sub.replace(/^\d+\s+/, '')}" and all its contents to trash?`)) moveFolderToTrash(`${activeFolder}/${sub}`); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Move to trash</button></>}
                                       </div>
                                     )}
                                   </div>
@@ -2453,7 +2616,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                           <button onClick={() => { setOpenFolderMenu(null); setActiveFolder(folderPath); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
                                           {(isEmployee || isAdmin) && <button onClick={() => { setOpenFolderMenu(null); downloadFolder(activeFolder, sub); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Download</button>}
                                           {(isEmployee || isAdmin) && <button onClick={() => { setOpenFolderMenu(null); setRenamingFolderPath(folderPath); setRenameFolderValue(sub.replace(/^\d+\s+/, '')); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>}
-                                          {(isEmployee || isAdmin) && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenFolderMenu(null); if (confirm(`Move "${sub.replace(/^\d+\s+/, '')}" and all its contents to trash?`)) moveFolderToTrash(activeFolder, sub); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Move to trash</button></>}
+                                          {(isEmployee || isAdmin) && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenFolderMenu(null); if (confirm(`Move "${sub.replace(/^\d+\s+/, '')}" and all its contents to trash?`)) moveFolderToTrash(`${activeFolder}/${sub}`); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Move to trash</button></>}
                                         </div>
                                       )}
                                     </div>
@@ -2472,9 +2635,10 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     <div key={folder}>
                       {docView === 'list' ? (
                         <>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: (isEmployee || isAdmin) ? '1fr 180px 120px 40px' : '1fr 180px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                             <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>NAME</span>
                             <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>LAST OPENED</span>
+                            {(isEmployee || isAdmin) && <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>DATE CREATED</span>}
                             <span />
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
@@ -2490,7 +2654,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 draggable={canEdit && !isMoving && !isRenaming}
                                 onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingDoc(doc); }}
                                 onDragEnd={() => { setDraggingDoc(null); setDragOverFolder(null); }}
-                                style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: isMoving ? 'rgba(59,130,246,0.06)' : 'rgba(255,255,255,0.02)', border: `1px solid ${isMoving ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)'}`, borderRadius: '6px', opacity: isMoving ? 0.6 : 1, cursor: isMoving ? 'default' : 'pointer', transition: 'opacity 0.15s' }}
+                                style={{ display: 'grid', gridTemplateColumns: (isEmployee || isAdmin) ? '1fr 180px 120px 40px' : '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: isMoving ? 'rgba(59,130,246,0.06)' : 'rgba(255,255,255,0.02)', border: `1px solid ${isMoving ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)'}`, borderRadius: '6px', opacity: isMoving ? 0.6 : 1, cursor: isMoving ? 'default' : 'pointer', transition: 'opacity 0.15s' }}
                               >
                                 <div onClick={() => !isRenaming && openDocument(doc.path, doc.name)} style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -2504,6 +2668,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>
                                   {isMoving ? <span style={{ color: '#3b82f6' }}>Moving...</span> : lastOpened ? `${new Date(lastOpened).toLocaleDateString(undefined, { day: '2-digit', month: 'short' })} ${new Date(lastOpened).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}` : '—'}
                                 </span>
+                                {(isEmployee || isAdmin) && <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{doc.createdAt ? new Date(doc.createdAt).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</span>}
                                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                                   {!isMoving && !isRenaming && (
                                     <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
@@ -2704,7 +2869,12 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                 {/* Left: back button (when inside subfolder) or admin selector */}
                 {privateActiveSubfolder ? (
                   <button
-                    onClick={() => { setPrivateActiveSubfolder(null); loadPrivateFiles(selectedPrivateUserId, null); }}
+                    onClick={() => {
+                      const parts = privateActiveSubfolder.split('/');
+                      const parentPath = parts.slice(0, -1).join('/') || null;
+                      setPrivateActiveSubfolder(parentPath);
+                      loadPrivateFiles(selectedPrivateUserId, parentPath);
+                    }}
                     style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: 'none', color: '#888', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer', padding: '0' }}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
@@ -2718,6 +2888,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                       setSelectedPrivateUserId(uid);
                       setPrivateActiveSubfolder(null);
                       await loadPrivateFiles(uid, null);
+                      await loadPrivateFolderTree(uid);
                       if (!uid) await loadPrivateItems();
                     }}
                     style={{ padding: '7px 10px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#aaa', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer', outline: 'none' }}
@@ -2739,11 +2910,11 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                   </button>
                   {!selectedPrivateUserId && (
                     <>
-                      <button onClick={() => { setAddingLink(true); setLinkTargetFolder('__private__'); setLinkName(''); setLinkUrl(''); }} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#888', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>
+                      {!privateActiveSubfolder && <button onClick={() => { setAddingLink(true); setLinkTargetFolder('__private__'); setLinkName(''); setLinkUrl(''); }} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#888', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                         Add link
-                      </button>
-                      {!privateActiveSubfolder && (creatingPrivateFolder ? (
+                      </button>}
+                      {(creatingPrivateFolder ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <input autoFocus value={newPrivateFolderName} onChange={e => setNewPrivateFolderName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && newPrivateFolderName.trim()) createPrivateFolderFixed(); if (e.key === 'Escape') { setCreatingPrivateFolder(false); setNewPrivateFolderName(''); } }} placeholder="Folder name..." style={{ padding: '7px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(168,85,247,0.4)', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '140px' }} />
                           <button onClick={createPrivateFolderFixed} style={{ padding: '7px 14px', background: '#a855f7', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Create</button>
@@ -2760,29 +2931,45 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                 </div>
               </div>
 
-              {/* Subfolder cards — shown at private root */}
-              {!privateActiveSubfolder && privateSubfolders.length > 0 && (
-                <div style={{ marginBottom: '20px' }}>
-                  <p style={{ fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', marginBottom: '8px' }}>FOLDERS</p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                    {privateSubfolders.map(subObj => {
-                      const subName = subObj?.name ?? subObj;
-                      const subCreatedAt = subObj?.createdAt;
-                      return (
-                        <div
-                          key={subName}
-                          onClick={() => { setPrivateActiveSubfolder(subName); loadPrivateFiles(selectedPrivateUserId, subName); }}
-                          style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}
-                        >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                          <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', fontFamily: 'Exo 2, sans-serif', flex: 1 }}>{subName}</span>
-                          {isAdmin && subCreatedAt && <span style={{ fontSize: '11px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{new Date(subCreatedAt).toLocaleDateString()}</span>}
-                        </div>
-                      );
-                    })}
+              {/* Subfolder cards — shown at any level */}
+              {(() => {
+                const currentLevel = privateActiveSubfolder || '';
+                const subsAtLevel = privateSubfolderMap[currentLevel] ? [...privateSubfolderMap[currentLevel]].sort() : [];
+                if (subsAtLevel.length === 0) return null;
+                return (
+                  <div style={{ marginBottom: '20px' }}>
+                    <p style={{ fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', marginBottom: '8px' }}>FOLDERS</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                      {subsAtLevel.map(sub => {
+                        const subPath = currentLevel ? `${currentLevel}/${sub}` : sub;
+                        return (
+                          <div
+                            key={subPath}
+                            onClick={() => { if (openFolderMenu === `__private_sub__${subPath}`) return; setPrivateActiveSubfolder(subPath); loadPrivateFiles(selectedPrivateUserId, subPath); }}
+                            style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                            <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', fontFamily: 'Exo 2, sans-serif', flex: 1 }}>{sub}</span>
+                            {!selectedPrivateUserId && (
+                              <div style={{ position: 'relative', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                                <button onClick={e => { e.stopPropagation(); setOpenFolderMenu(openFolderMenu === `__private_sub__${subPath}` ? null : `__private_sub__${subPath}`); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 8px', borderRadius: '4px', fontSize: '18px', lineHeight: 1, fontFamily: 'monospace' }}>⋮</button>
+                                {openFolderMenu === `__private_sub__${subPath}` && (
+                                  <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', right: 0, top: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+                                    <button onClick={() => { setOpenFolderMenu(null); setPrivateActiveSubfolder(subPath); loadPrivateFiles(selectedPrivateUserId, subPath); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                    <button onClick={() => { setOpenFolderMenu(null); const n = window.prompt('Rename folder:', sub); if (n && n.trim()) renamePrivateSubfolder(subPath, n.trim()); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>
+                                    <div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/>
+                                    <button onClick={() => { setOpenFolderMenu(null); if (confirm(`Delete folder "${sub}"? All files inside will be deleted.`)) deletePrivateSubfolder(subPath); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Delete folder</button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* Add link form */}
               {addingPrivate === 'link' && !selectedPrivateUserId && (
@@ -2801,14 +2988,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
               {/* Private files */}
               {privateFiles.length > 0 && (
                 <div style={{ marginBottom: '20px' }}>
-                  {privateDocView === 'list' && (
-                    <div style={{ display: 'grid', gridTemplateColumns: isAdmin ? '1fr 130px 40px' : '1fr 40px', padding: '4px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                      <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>FILES</span>
-                      {isAdmin && <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>DATE UPLOADED</span>}
-                      <span />
-                    </div>
-                  )}
-                  {privateDocView === 'grid' && <p style={{ fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', marginBottom: '8px' }}>FILES</p>}
+                  <p style={{ fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', marginBottom: '8px' }}>FILES</p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                     {privateDocView === 'grid' ? (
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(155px, 1fr))', gap: '10px' }}>
@@ -2862,8 +3042,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
               )}
               {privateFilesLoading && <p style={{ fontSize: '14px', color: '#555', fontFamily: 'Exo 2, sans-serif', marginBottom: '16px' }}>Loading files...</p>}
 
-              {/* Private links — from document_links with folder='__private__' */}
-              {(() => {
+              {/* Private links — from document_links with folder='__private__', only shown at root */}
+              {!privateActiveSubfolder && (() => {
                 const viewUserId = selectedPrivateUserId || user.id;
                 const privateLinks = links.filter(l => l.folder === '__private__' && (l.created_by === viewUserId || (isAdmin && !selectedPrivateUserId)));
                 if (privateLinks.length === 0) return null;
@@ -2905,7 +3085,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
               })()}
 
               {/* Empty state */}
-              {!privateFilesLoading && privateFiles.length === 0 && privateSubfolders.length === 0 && links.filter(l => l.folder === '__private__' && (l.created_by === (selectedPrivateUserId || user.id) || (isAdmin && !selectedPrivateUserId))).length === 0 && (
+              {!privateFilesLoading && privateFiles.length === 0 && (privateSubfolderMap[privateActiveSubfolder || '']?.size ?? 0) === 0 && links.filter(l => l.folder === '__private__' && (l.created_by === (selectedPrivateUserId || user.id) || (isAdmin && !selectedPrivateUserId))).length === 0 && (
                 <p style={{ fontSize: '14px', color: '#555', fontFamily: 'Exo 2, sans-serif' }}>
                   {selectedPrivateUserId ? 'No private files for this user.' : 'Nothing here yet. Upload a file, add a link, or create a folder.'}
                 </p>
@@ -3203,31 +3383,81 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
         </div>
       )}
 
-      {/* Right-click context menu for top-level folders */}
+      {/* Right-click context menu for folders */}
       {contextMenu && (
         <div
           onClick={e => e.stopPropagation()}
           style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x, background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 300, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.6)' }}
         >
-          <button
-            onClick={() => {
-              const current = folderNames[contextMenu.folder] || contextMenu.folder.replace(/_/g, ' ').replace(/^\d+\s+/, '');
-              setRenamingTopFolder(contextMenu.folder);
-              setRenameTopFolderValue(current);
-              setContextMenu(null);
-            }}
-            style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}
-          >Rename</button>
-          {isAdmin && <>
-            <div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/>
+          {/* Top-level folder rename */}
+          {(!contextMenu.type || contextMenu.type === 'top') && <>
             <button
               onClick={() => {
-                const displayName = folderNames[contextMenu.folder] || contextMenu.folder.replace(/_/g, ' ').replace(/^\d+\s+/, '');
-                deleteTopLevelFolder(contextMenu.folder, displayName);
+                const current = folderNames[contextMenu.folder] || contextMenu.folder.replace(/_/g, ' ').replace(/^\d+\s+/, '');
+                setRenamingTopFolder(contextMenu.folder);
+                setRenameTopFolderValue(current);
+                setContextMenu(null);
               }}
-              style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}
-            >Delete folder</button>
+              style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}
+            >Rename</button>
+            {isAdmin && <>
+              <div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/>
+              <button
+                onClick={() => {
+                  const displayName = folderNames[contextMenu.folder] || contextMenu.folder.replace(/_/g, ' ').replace(/^\d+\s+/, '');
+                  deleteTopLevelFolder(contextMenu.folder, displayName);
+                }}
+                style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}
+              >Delete folder</button>
+            </>}
           </>}
+          {/* Subfolder rename + delete (public/internal) */}
+          {contextMenu.type === 'sub' && (() => {
+            const fpParts = contextMenu.folderPath.split('/');
+            const subName = fpParts[fpParts.length - 1];
+            return (<>
+              <button
+                onClick={() => {
+                  const newName = window.prompt('Rename folder:', subName.replace(/^\d+\s+/, ''));
+                  setContextMenu(null);
+                  if (newName && newName.trim()) renameFolder(fpParts.slice(0, -1).join('/'), subName, newName.trim());
+                }}
+                style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}
+              >Rename</button>
+              <div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/>
+              <button
+                onClick={() => {
+                  const fp = contextMenu.folderPath;
+                  setContextMenu(null);
+                  if (confirm(`Move "${subName.replace(/^\d+\s+/, '')}" and all its contents to trash?`)) moveFolderToTrash(fp);
+                }}
+                style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}
+              >Delete folder</button>
+            </>);
+          })()}
+          {/* Private subfolder rename */}
+          {contextMenu.type === 'private-sub' && (() => {
+            const subPath = contextMenu.sub;
+            const subDisplayName = subPath.split('/').pop();
+            return (<>
+              <button
+                onClick={() => {
+                  const newName = window.prompt('Rename folder:', subDisplayName);
+                  setContextMenu(null);
+                  if (newName && newName.trim()) renamePrivateSubfolder(subPath, newName.trim());
+                }}
+                style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}
+              >Rename</button>
+              <div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/>
+              <button
+                onClick={() => {
+                  setContextMenu(null);
+                  if (confirm(`Delete folder "${subDisplayName}"? All files inside will be deleted.`)) deletePrivateSubfolder(subPath);
+                }}
+                style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}
+              >Delete folder</button>
+            </>);
+          })()}
         </div>
       )}
 

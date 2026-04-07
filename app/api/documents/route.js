@@ -27,7 +27,7 @@ async function listAll(prefix) {
       files.push(...sub.files)
       folderPaths.push(...sub.folderPaths)
     } else if (item.name !== '.emptyFolderPlaceholder' && item.name !== '.keep') {
-      files.push({ name: item.name, path: `${prefix}/${item.name}`, mimeType: item.metadata?.mimetype || '' })
+      files.push({ name: item.name, path: `${prefix}/${item.name}`, mimeType: item.metadata?.mimetype || '', createdAt: item.created_at || null })
     }
   }
   return { files, folderPaths }
@@ -62,15 +62,15 @@ export async function GET(request) {
     const documents = []
 
     general.files.forEach(file => {
-      documents.push({ name: file.name, path: file.path, mimeType: file.mimeType, restricted: false, internal: false })
+      documents.push({ name: file.name, path: file.path, mimeType: file.mimeType, restricted: false, internal: false, createdAt: file.createdAt })
     })
 
     restricted.files.forEach(file => {
-      documents.push({ name: file.name, path: file.path, mimeType: file.mimeType, restricted: true, internal: false })
+      documents.push({ name: file.name, path: file.path, mimeType: file.mimeType, restricted: true, internal: false, createdAt: file.createdAt })
     })
 
     internal.files.forEach(file => {
-      documents.push({ name: file.name, path: file.path, mimeType: file.mimeType, restricted: false, internal: true })
+      documents.push({ name: file.name, path: file.path, mimeType: file.mimeType, restricted: false, internal: true, createdAt: file.createdAt })
     })
 
     // All known folder paths (for sidebar, including empty folders)

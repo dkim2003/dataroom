@@ -8,6 +8,21 @@ const supabase = createClient(
 
 const ADMIN_EMAIL = 'contact@kimduhyun.com'
 
+async function listAllFolders(prefix) {
+  const { data, error } = await supabase.storage.from('documents').list(prefix, { limit: 1000 })
+  if (error || !data) return []
+  const paths = []
+  for (const item of data) {
+    if (item.id === null && item.name !== '.keep') {
+      const subPath = `${prefix}/${item.name}`
+      paths.push(subPath)
+      const nested = await listAllFolders(subPath)
+      paths.push(...nested)
+    }
+  }
+  return paths
+}
+
 async function verifyUser(request) {
   const authHeader = request.headers.get('authorization')
   if (!authHeader) return null
@@ -31,6 +46,14 @@ export async function GET(request) {
 
     if (targetUserId !== auth.user.id && !auth.isAdmin)
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+    const recursive = searchParams.get('recursive') === 'true'
+    if (recursive) {
+      const allPaths = await listAllFolders(`private/${targetUserId}`)
+      const prefix = `private/${targetUserId}/`
+      const folderPaths = allPaths.map(p => p.startsWith(prefix) ? p.slice(prefix.length) : p)
+      return NextResponse.json({ folderPaths })
+    }
 
     const prefix = subfolder
       ? `private/${targetUserId}/${subfolder}`
@@ -94,17 +117,22 @@ export async function PATCH(request) {
     const auth = await verifyUser(request)
     if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const { path, newName } = await request.json()
-    if (!path || !newName?.trim()) return NextResponse.json({ error: 'path and newName required' }, { status: 400 })
+    const { path, newName, newPath: explicitNewPath } = await request.json()
+    if (!path || (!newName?.trim() && !explicitNewPath)) return NextResponse.json({ error: 'path and newName or newPath required' }, { status: 400 })
 
     const pathUserId = path.split('/')[1]
     if (pathUserId !== auth.user.id && !auth.isAdmin)
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-    // Keep the same subfolder prefix, just change filename
-    const parts = path.split('/')
-    parts[parts.length - 1] = newName.trim()
-    const newPath = parts.join('/')
+    // Support explicit newPath (for subfolder rename/move) or derive from newName
+    let newPath
+    if (explicitNewPath) {
+      newPath = explicitNewPath
+    } else {
+      const parts = path.split('/')
+      parts[parts.length - 1] = newName.trim()
+      newPath = parts.join('/')
+    }
     if (newPath === path) return NextResponse.json({ success: true, newPath })
 
     const { data: fileData, error: downloadError } = await supabase.storage.from('documents').download(path)
