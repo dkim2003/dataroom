@@ -29,17 +29,22 @@ export async function GET(request) {
     const isEmployee = profile?.role === 'pre_nda_employee'  || profile?.role === 'post_nda_employee'
     const isAdmin    = user.email === ADMIN_EMAIL || profile?.is_admin === true
 
-    const { data, error } = await supabase
-      .from('document_links')
-      .select('*')
-      .order('created_at', { ascending: true })
+    const [{ data, error }, { data: internalFolderData }] = await Promise.all([
+      supabase.from('document_links').select('*').order('created_at', { ascending: true }),
+      supabase.storage.from('documents').list('internal', { limit: 500 })
+    ])
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    // Build set of top-level internal folder names from storage
+    const internalFolderNames = new Set((internalFolderData || []).map(f => f.name))
 
     const filtered = data.filter(link => {
       // Private-tab links: only visible to creator, or to admin
       if (link.folder === '__private__') return link.created_by === user.id || isAdmin
-      if (link.internal  && !isEmployee && !isAdmin) return false
+      // A link is internal if flagged OR if its top-level folder name exists under internal/ in storage
+      const isLinkInternal = link.internal || internalFolderNames.has(link.folder.split('/')[0])
+      if (isLinkInternal && !isEmployee && !isAdmin) return false
       if (link.restricted && !isPostNda  && !isAdmin) return false
       return true
     })

@@ -108,11 +108,13 @@ function SolDot({ taskToast }) {
 
 // Sol chat panel — used in both desktop right panel and center when Sol tab is active
 function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessage, taskToast }) {
-  const bottomRef = useRef(null)
+  const scrollRef = useRef(null)
 
-  // Auto-scroll to bottom whenever messages change
+  // Auto-scroll the inner message container — never touches the page scroll
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
   }, [solMessages, solLoading])
 
   return (
@@ -124,7 +126,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
           <span style={{ fontSize: '13px', color: '#777', marginLeft: 'auto' }}>ask me anything!</span>
         </div>
       </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '18px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '18px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
         {solMessages.map((msg, i) => (
           <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
             <div style={{ maxWidth: '88%', padding: '10px 14px', borderRadius: '8px', fontSize: '14px', lineHeight: '1.6', background: msg.role === 'user' ? '#3b82f6' : 'rgba(255,255,255,0.06)', color: msg.role === 'user' ? '#fff' : '#ddd', fontFamily: 'Exo 2, sans-serif', whiteSpace: 'pre-wrap' }}>
@@ -143,8 +145,6 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                   {[0,1,2].map(i => <div key={i} style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#555', animation: `bounce 1.2s infinite ${i*0.2}s` }}/>)}
                   </div>
                 )}
-                {/* Scroll anchor */}
-                <div ref={bottomRef} />
                 </div>
                 <div style={{ padding: '10px 14px', display: 'flex', flexWrap: 'wrap', gap: '6px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
                   {['What is OLAC?', 'Summarize the financials', 'What is the ask?'].map(prompt => (
@@ -647,7 +647,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 const saveRes = await fetch('/api/links', {
                                   method: 'POST',
                                   headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ name, url, folder: targetFolder, restricted: false, internal: false })
+                                  body: JSON.stringify({ name, url, folder: targetFolder, restricted: folderPaths.some(fp => fp.startsWith(`restricted/${targetFolder}`)), internal: folderPaths.some(fp => fp.startsWith(`internal/${targetFolder}`)) })
                                 });
                                 const saveResult = await saveRes.json();
                                 if (!saveResult.error) {
@@ -992,12 +992,15 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               setRenamingTopFolder(null);
                               if (!trimmed || trimmed === (folderNames[original] || original.replace(/_/g, ' ').replace(/^\d+\s+/, ''))) return;
                               const { data: { session } } = await supabase.auth.getSession();
-                              await fetch('/api/folder-names', {
+                              const res = await fetch('/api/folder-names', {
                                 method: 'POST',
                                 headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ original, display: trimmed })
                               });
-                              setFolderNames(prev => ({ ...prev, [original]: trimmed }));
+                              const json = await res.json();
+                              if (json.success) {
+                                setFolderNames(prev => ({ ...prev, [original]: trimmed }));
+                              }
                             }
 
                             async function deleteTopLevelFolder(folderName, displayName) {
@@ -1466,6 +1469,24 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                   headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
                                   body: JSON.stringify({ folderPath: newFullPath, isRestricted, isInternal })
                                 });
+                              } else {
+                                // folderFullPath not found in state — try all prefixes to delete old .keep
+                                for (const prefix of ['general', 'restricted', 'internal']) {
+                                  await fetch('/api/folders', {
+                                    method: 'DELETE',
+                                    headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ keepPath: `${prefix}/${oldFullPath}/.keep` })
+                                  });
+                                }
+                                // Create new .keep — infer prefix from the first matched file, or default to 'general'
+                                const inferredPrefix = folderDocs[0]?.path.split('/')[0] || 'general';
+                                const isRestricted = inferredPrefix === 'restricted';
+                                const isInternal = inferredPrefix === 'internal';
+                                await fetch('/api/folders', {
+                                  method: 'POST',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ folderPath: newFullPath, isRestricted, isInternal })
+                                });
                               }
                               taskDone('Folder renamed');
                             }
@@ -1584,8 +1605,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
     : visibleDocuments;
 
   const filteredLinks = activeFolder
-    ? links.filter(l => l.folder === activeFolder && l.folder !== '__private__')
-    : links.filter(l => l.folder !== '__private__');
+    ? links.filter(l => l.folder === activeFolder && l.folder !== '__private__' && (isEmployee || isAdmin || !l.internal))
+    : links.filter(l => l.folder !== '__private__' && (isEmployee || isAdmin || !l.internal));
 
   const groupedDocs = filteredDocs.reduce((groups, doc) => {
     const parts = doc.path.split('/');
@@ -2035,7 +2056,13 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
               <div data-tutorial="doc-library" style={{ marginBottom: '28px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
                 <div>
                   <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', marginBottom: '6px' }}>
-                    {activeFolder ? activeFolder.split('/').map(p => p.replace(/_/g, ' ').replace(/^\d+\s+/, '')).join(' / ') : 'DOCUMENT LIBRARY'}
+                    {activeFolder ? (() => {
+                      const parts = activeFolder.split('/');
+                      return parts.map((p, i) =>
+                        i === 0 ? (folderNames[p] || p.replace(/_/g, ' ').replace(/^\d+\s+/, ''))
+                                : p.replace(/_/g, ' ').replace(/^\d+\s+/, '')
+                      ).join(' / ');
+                    })() : 'DOCUMENT LIBRARY'}
                   </h1>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
@@ -2201,17 +2228,20 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                   {filteredLinks.length === 0 && <p style={{ fontSize: '14px', color: '#777' }}>No documents available yet.</p>}
                   {filteredLinks.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                         <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>LINKS</span>
-                        <span /><span />
+                        <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>LAST OPENED</span>
+                        <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>DATE CREATED</span>
+                        <span />
                       </div>
                       {filteredLinks.map(link => (
-                        <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && window.open(link.url, '_blank')}>
+                        <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && window.open(link.url, '_blank')}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                             {renamingLinkId === link.id ? <input autoFocus value={renameLinkValue} onChange={e => setRenameLinkValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') renameLink(link.id, renameLinkValue); if (e.key === 'Escape') setRenamingLinkId(null); }} onBlur={() => renameLink(link.id, renameLinkValue)} onClick={e => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} /> : <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>}
                           </div>
-                          <span />
+                          <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>—</span>
+                          <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{link.created_at ? new Date(link.created_at).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</span>
                           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                             {(isEmployee || isAdmin) && (
                               <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
@@ -2256,7 +2286,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                   {isRenaming ? (
-                                    <input autoFocus value={renameFolderValue} onChange={(e) => setRenameFolderValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') renameFolder(activeFolder, sub, renameFolderValue); if (e.key === 'Escape') setRenamingFolderPath(null); }} onBlur={() => setRenamingFolderPath(null)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '12px', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 6px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '100%' }} />
+                                    <input autoFocus value={renameFolderValue} onChange={(e) => setRenameFolderValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') renameFolder(activeFolder, sub, renameFolderValue); if (e.key === 'Escape') setRenamingFolderPath(null); }} onBlur={() => renameFolder(activeFolder, sub, renameFolderValue)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '12px', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 6px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '100%' }} />
                                   ) : (
                                     <p style={{ fontSize: '12px', fontWeight: '500', color: '#ddd', fontFamily: 'Exo 2, sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>{sub.replace(/^\d+\s+/, '')}</p>
                                   )}
@@ -2281,9 +2311,10 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                       </div>
                     ) : (
                       <>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                           <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>NAME</span>
                           <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>LAST OPENED</span>
+                          <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>DATE CREATED</span>
                           <span />
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
@@ -2291,15 +2322,16 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const folderPath = `${activeFolder}/${sub}`;
                             const isRenaming = renamingFolderPath === folderPath;
                             return (
-                              <div key={sub} draggable={isEmployee || isAdmin} onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingFolder({ topFolder: activeFolder, sub }); }} onDragEnd={() => { setDraggingFolder(null); setDragOverFolder(null); }} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}>
+                              <div key={sub} draggable={isEmployee || isAdmin} onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingFolder({ topFolder: activeFolder, sub }); }} onDragEnd={() => { setDraggingFolder(null); setDragOverFolder(null); }} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}>
                                 <div onClick={() => !isRenaming && setActiveFolder(folderPath)} style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                                   {isRenaming ? (
-                                    <input autoFocus value={renameFolderValue} onChange={(e) => setRenameFolderValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') renameFolder(activeFolder, sub, renameFolderValue); if (e.key === 'Escape') setRenamingFolderPath(null); }} onBlur={() => setRenamingFolderPath(null)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} />
+                                    <input autoFocus value={renameFolderValue} onChange={(e) => setRenameFolderValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') renameFolder(activeFolder, sub, renameFolderValue); if (e.key === 'Escape') setRenamingFolderPath(null); }} onBlur={() => renameFolder(activeFolder, sub, renameFolderValue)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} />
                                   ) : (
                                     <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.replace(/^\d+\s+/, '')}</span>
                                   )}
                                 </div>
+                                <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>—</span>
                                 <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>—</span>
                                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                                   {!isRenaming && (
@@ -2324,17 +2356,20 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     )}
                     {filteredLinks.length > 0 && (
                       <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                           <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>LINKS</span>
-                          <span /><span />
+                          <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>LAST OPENED</span>
+                          <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>DATE CREATED</span>
+                          <span />
                         </div>
                         {filteredLinks.map(link => (
-                          <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && window.open(link.url, '_blank')}>
+                          <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && window.open(link.url, '_blank')}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                               {renamingLinkId === link.id ? <input autoFocus value={renameLinkValue} onChange={e => setRenameLinkValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') renameLink(link.id, renameLinkValue); if (e.key === 'Escape') setRenamingLinkId(null); }} onBlur={() => renameLink(link.id, renameLinkValue)} onClick={e => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} /> : <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>}
                             </div>
-                            <span />
+                            <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>—</span>
+                            <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{link.created_at ? new Date(link.created_at).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</span>
                             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                               {(isEmployee || isAdmin) && (
                                 <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
@@ -2374,7 +2409,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                       draggable={canEdit && !isMoving && !isRenaming}
                       onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingDoc(doc); }}
                       onDragEnd={() => { setDraggingDoc(null); setDragOverFolder(null); }}
-                      style={{ display: 'grid', gridTemplateColumns: (isEmployee || isAdmin) ? '1fr 180px 120px 40px' : '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: isMoving ? 'rgba(59,130,246,0.06)' : 'rgba(255,255,255,0.02)', border: `1px solid ${isMoving ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)'}`, borderRadius: '6px', opacity: isMoving ? 0.6 : 1, cursor: isMoving ? 'default' : 'pointer', transition: 'opacity 0.15s' }}
+                      style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: isMoving ? 'rgba(59,130,246,0.06)' : 'rgba(255,255,255,0.02)', border: `1px solid ${isMoving ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)'}`, borderRadius: '6px', opacity: isMoving ? 0.6 : 1, cursor: isMoving ? 'default' : 'pointer', transition: 'opacity 0.15s' }}
                     >
                       {/* Name column */}
                       <div onClick={() => !isRenaming && openDocument(doc.path, doc.name)} style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
@@ -2391,7 +2426,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                         {isMoving ? <span style={{ color: '#3b82f6' }}>Moving...</span> : lastOpened ? `${new Date(lastOpened).toLocaleDateString(undefined, { day: '2-digit', month: 'short' })} ${new Date(lastOpened).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}` : '—'}
                       </span>
                       {/* Date Created column — employees/admin only */}
-                      {(isEmployee || isAdmin) && <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{doc.createdAt ? new Date(doc.createdAt).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</span>}
+                      <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{doc.createdAt ? new Date(doc.createdAt).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</span>
                       {/* Actions column */}
                       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                         {!isMoving && !isRenaming && (
@@ -2484,18 +2519,21 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                 };
                 const linksList = filteredLinks.length > 0 ? (
                   <div style={{ marginTop: '24px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                       <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>LINKS</span>
-                      <span /><span />
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>LAST OPENED</span>
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>DATE CREATED</span>
+                      <span />
                     </div>
                     {filteredLinks.map(link => (
-                      <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && window.open(link.url, '_blank')}>
+                      <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && window.open(link.url, '_blank')}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                           {renamingLinkId === link.id ? <input autoFocus value={renameLinkValue} onChange={e => setRenameLinkValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') renameLink(link.id, renameLinkValue); if (e.key === 'Escape') setRenamingLinkId(null); }} onBlur={() => renameLink(link.id, renameLinkValue)} onClick={e => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} /> : <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>}
                           {renamingLinkId !== link.id && <span style={{ fontSize: '11px', color: '#3b82f6', background: 'rgba(59,130,246,0.1)', padding: '1px 6px', borderRadius: '3px', fontFamily: 'Exo 2, sans-serif', flexShrink: 0 }}>{link.folder.replace(/_/g, ' ').replace(/^\d+\s+/, '')}</span>}
                         </div>
-                        <span />
+                        <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>—</span>
+                        <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{link.created_at ? new Date(link.created_at).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</span>
                         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                           {(isEmployee || isAdmin) && (
                             <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
@@ -2524,10 +2562,10 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                   </>
                 ) : (
                   <>
-                    <div style={{ display: 'grid', gridTemplateColumns: (isEmployee || isAdmin) ? '1fr 180px 120px 40px' : '1fr 180px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                       <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>NAME</span>
                       <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>LAST OPENED</span>
-                      {(isEmployee || isAdmin) && <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>DATE CREATED</span>}
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>DATE CREATED</span>
                       <span />
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
@@ -2562,7 +2600,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                   {isRenaming ? (
-                                    <input autoFocus value={renameFolderValue} onChange={(e) => setRenameFolderValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') renameFolder(activeFolder, sub, renameFolderValue); if (e.key === 'Escape') setRenamingFolderPath(null); }} onBlur={() => setRenamingFolderPath(null)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '12px', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 6px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '100%' }} />
+                                    <input autoFocus value={renameFolderValue} onChange={(e) => setRenameFolderValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') renameFolder(activeFolder, sub, renameFolderValue); if (e.key === 'Escape') setRenamingFolderPath(null); }} onBlur={() => renameFolder(activeFolder, sub, renameFolderValue)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '12px', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 6px', fontFamily: 'Exo 2, sans-serif', outline: 'none', width: '100%' }} />
                                   ) : (
                                     <p style={{ fontSize: '12px', fontWeight: '500', color: '#ddd', fontFamily: 'Exo 2, sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>{sub.replace(/^\d+\s+/, '')}</p>
                                   )}
@@ -2587,9 +2625,10 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                       </div>
                     ) : (
                       <>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                           <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>NAME</span>
                           <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>LAST OPENED</span>
+                          <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>DATE CREATED</span>
                           <span />
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
@@ -2597,15 +2636,16 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const folderPath = `${activeFolder}/${sub}`;
                             const isRenaming = renamingFolderPath === folderPath;
                             return (
-                              <div key={sub} draggable={isEmployee || isAdmin} onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingFolder({ topFolder: activeFolder, sub }); }} onDragEnd={() => { setDraggingFolder(null); setDragOverFolder(null); }} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}>
+                              <div key={sub} draggable={isEmployee || isAdmin} onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingFolder({ topFolder: activeFolder, sub }); }} onDragEnd={() => { setDraggingFolder(null); setDragOverFolder(null); }} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}>
                                 <div onClick={() => !isRenaming && setActiveFolder(folderPath)} style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                                   {isRenaming ? (
-                                    <input autoFocus value={renameFolderValue} onChange={(e) => setRenameFolderValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') renameFolder(activeFolder, sub, renameFolderValue); if (e.key === 'Escape') setRenamingFolderPath(null); }} onBlur={() => setRenamingFolderPath(null)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} />
+                                    <input autoFocus value={renameFolderValue} onChange={(e) => setRenameFolderValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') renameFolder(activeFolder, sub, renameFolderValue); if (e.key === 'Escape') setRenamingFolderPath(null); }} onBlur={() => renameFolder(activeFolder, sub, renameFolderValue)} onClick={(e) => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} />
                                   ) : (
                                     <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.replace(/^\d+\s+/, '')}</span>
                                   )}
                                 </div>
+                                <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>—</span>
                                 <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>—</span>
                                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                                   {!isRenaming && (
@@ -2635,10 +2675,10 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     <div key={folder}>
                       {docView === 'list' ? (
                         <>
-                          <div style={{ display: 'grid', gridTemplateColumns: (isEmployee || isAdmin) ? '1fr 180px 120px 40px' : '1fr 180px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                             <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>NAME</span>
                             <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>LAST OPENED</span>
-                            {(isEmployee || isAdmin) && <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>DATE CREATED</span>}
+                            <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>DATE CREATED</span>
                             <span />
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
@@ -2654,7 +2694,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 draggable={canEdit && !isMoving && !isRenaming}
                                 onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingDoc(doc); }}
                                 onDragEnd={() => { setDraggingDoc(null); setDragOverFolder(null); }}
-                                style={{ display: 'grid', gridTemplateColumns: (isEmployee || isAdmin) ? '1fr 180px 120px 40px' : '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: isMoving ? 'rgba(59,130,246,0.06)' : 'rgba(255,255,255,0.02)', border: `1px solid ${isMoving ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)'}`, borderRadius: '6px', opacity: isMoving ? 0.6 : 1, cursor: isMoving ? 'default' : 'pointer', transition: 'opacity 0.15s' }}
+                                style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: isMoving ? 'rgba(59,130,246,0.06)' : 'rgba(255,255,255,0.02)', border: `1px solid ${isMoving ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)'}`, borderRadius: '6px', opacity: isMoving ? 0.6 : 1, cursor: isMoving ? 'default' : 'pointer', transition: 'opacity 0.15s' }}
                               >
                                 <div onClick={() => !isRenaming && openDocument(doc.path, doc.name)} style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -2668,7 +2708,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>
                                   {isMoving ? <span style={{ color: '#3b82f6' }}>Moving...</span> : lastOpened ? `${new Date(lastOpened).toLocaleDateString(undefined, { day: '2-digit', month: 'short' })} ${new Date(lastOpened).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}` : '—'}
                                 </span>
-                                {(isEmployee || isAdmin) && <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{doc.createdAt ? new Date(doc.createdAt).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</span>}
+                                <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{doc.createdAt ? new Date(doc.createdAt).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</span>
                                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                                   {!isMoving && !isRenaming && (
                                     <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
@@ -2762,20 +2802,22 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                   <div style={{ marginTop: '24px' }}>
                     {docView === 'list' && (
                       <>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', padding: '6px 18px', marginBottom: '4px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                           <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>LINKS</span>
-                          <span />
+                          <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>LAST OPENED</span>
+                          <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>DATE CREATED</span>
                           <span />
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                           {filteredLinks.map(link => (
-                            <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}
+                            <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}
                               onClick={() => window.open(link.url, '_blank')}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                                 <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>
                               </div>
-                              <span />
+                              <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>—</span>
+                              <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{link.created_at ? new Date(link.created_at).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</span>
                               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                                 {(isEmployee || isAdmin) && (
                                   <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
@@ -2946,10 +2988,14 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                           <div
                             key={subPath}
                             onClick={() => { if (openFolderMenu === `__private_sub__${subPath}`) return; setPrivateActiveSubfolder(subPath); loadPrivateFiles(selectedPrivateUserId, subPath); }}
-                            style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}
+                            style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}
                           >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                            <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', fontFamily: 'Exo 2, sans-serif', flex: 1 }}>{sub}</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                              <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', fontFamily: 'Exo 2, sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</span>
+                            </div>
+                            <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>—</span>
+                            <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>—</span>
                             {!selectedPrivateUserId && (
                               <div style={{ position: 'relative', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                                 <button onClick={e => { e.stopPropagation(); setOpenFolderMenu(openFolderMenu === `__private_sub__${subPath}` ? null : `__private_sub__${subPath}`); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 8px', borderRadius: '4px', fontSize: '18px', lineHeight: 1, fontFamily: 'monospace' }}>⋮</button>
@@ -3008,7 +3054,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                       privateFiles.map(file => {
                         const isRenaming = renamingPrivateFilePath === file.path;
                         return (
-                          <div key={file.path} style={{ display: 'grid', gridTemplateColumns: isAdmin ? '1fr 130px 40px' : '1fr 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px' }}>
+                          <div key={file.path} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, cursor: isRenaming ? 'default' : 'pointer' }} onClick={() => !isRenaming && openDocument(file.path, file.name)}>
                               <FileTypeIcon name={file.name} size={24} />
                               {isRenaming ? (
@@ -3017,7 +3063,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', fontFamily: 'Exo 2, sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</span>
                               )}
                             </div>
-                            {isAdmin && <span style={{ fontSize: '12px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{file.createdAt ? new Date(file.createdAt).toLocaleDateString() : '—'}</span>}
+                            <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>—</span>
+                            <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{file.createdAt ? new Date(file.createdAt).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</span>
                             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                               {!isRenaming && (
                                 <div style={{ position: 'relative' }}>
@@ -3054,7 +3101,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                       {privateLinks.map(link => {
                         const isRenaming = renamingLinkId === link.id;
                         return (
-                          <div key={link.id} style={{ display: 'grid', gridTemplateColumns: isAdmin ? '1fr 130px 40px' : '1fr 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: isRenaming ? 'default' : 'pointer' }} onClick={() => !isRenaming && window.open(link.url, '_blank')}>
+                          <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: isRenaming ? 'default' : 'pointer' }} onClick={() => !isRenaming && window.open(link.url, '_blank')}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                               {isRenaming ? (
@@ -3063,7 +3110,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>
                               )}
                             </div>
-                            {isAdmin && <span style={{ fontSize: '12px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{link.created_at ? new Date(link.created_at).toLocaleDateString() : '—'}</span>}
+                            <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>—</span>
+                            <span style={{ fontSize: '13px', color: '#444', fontFamily: 'Exo 2, sans-serif' }}>{link.created_at ? new Date(link.created_at).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</span>
                             <div style={{ display: 'flex', justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
                               <div style={{ position: 'relative' }}>
                                 <button onClick={e => { e.stopPropagation(); setOpenMenuPath(openMenuPath === link.id ? null : link.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 8px', borderRadius: '4px', fontSize: '18px', lineHeight: 1, fontFamily: 'monospace' }}>⋮</button>

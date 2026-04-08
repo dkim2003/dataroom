@@ -47,7 +47,15 @@ export async function POST(request) {
     } else {
       delete names[original]
     }
-    await supabase.from('settings').upsert({ key: 'folder_names', value: names })
+    let saveError
+    if (existing) {
+      const { error } = await supabase.from('settings').update({ value: names }).eq('key', 'folder_names')
+      saveError = error
+    } else {
+      const { error } = await supabase.from('settings').insert({ key: 'folder_names', value: names })
+      saveError = error
+    }
+    if (saveError) return NextResponse.json({ error: saveError.message }, { status: 500 })
     return NextResponse.json({ success: true, names })
   } catch (err) {
     return NextResponse.json({ error: err.message }, { status: 500 })
