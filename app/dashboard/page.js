@@ -1090,12 +1090,6 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             }
                             async function handleFileDrop(file) {
                               if (!file) return;
-                              if (!file.name.toLowerCase().endsWith('.pdf')) {
-                                setDropStatus('error');
-                                setDropStatusMessage('Only PDF files are supported.');
-                                setTimeout(() => { setDropStatus(''); setDropStatusMessage(''); }, 3000);
-                                return;
-                              }
                               const { data: { session } } = await supabase.auth.getSession();
 
                               // If inside a folder, skip Sol and upload directly to current location
@@ -2113,7 +2107,6 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                   <input
                     ref={dropZoneInputRef}
                     type="file"
-                    accept=".pdf"
                     style={{ display: 'none' }}
                     onChange={(e) => { const file = e.target.files[0]; if (file) handleFileDrop(file); e.target.value = ''; }}
                   />
@@ -2145,7 +2138,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                           <line x1="12" y1="3" x2="12" y2="15"/>
                         </svg>
                         <p style={{ fontSize: '14px', color: '#555', fontFamily: 'Exo 2, sans-serif', margin: 0 }}>
-                          {activeFolder ? 'Drop a PDF here — file will be added to this folder' : 'Drop a PDF here — Sol will sort it automatically'}
+                          {activeFolder ? 'Drop a file here — file will be added to this folder' : 'Drop a file here — Sol will sort it automatically'}
                         </p>
                         {activeFolder && (() => {
                           const topFolder = activeFolder.split('/')[0];

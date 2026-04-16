@@ -87,10 +87,7 @@ export async function POST(request) {
     const bytes = await file.arrayBuffer()
     const base64 = Buffer.from(bytes).toString('base64')
 
-    // Validate it's a PDF by checking magic bytes (PDFs start with %PDF → "JVBERi" in base64)
-    if (!base64.startsWith('JVBERi')) {
-      return NextResponse.json({ error: 'Only PDF files are supported for auto-sorting' }, { status: 400 })
-    }
+    const isPdf = base64.startsWith('JVBERi')
 
     // Fetch current due diligence items so Claude can check them off
     const { data: diligenceItems } = await supabase
@@ -102,12 +99,8 @@ export async function POST(request) {
       .map(d => `${d.position}: ${d.item}`)
       .join('\n')
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 512,
-      messages: [{
-        role: 'user',
-        content: [
+    const userContent = isPdf
+      ? [
           {
             type: 'document',
             source: { type: 'base64', media_type: 'application/pdf', data: base64 },
@@ -133,7 +126,31 @@ Respond with ONLY a valid JSON object in this exact format, no explanation, no o
 {"folder": "FOLDER_PATH_HERE", "isRestricted": false, "diligenceToCheck": []}`
           }
         ]
-      }]
+      : [
+          {
+            type: 'text',
+            text: `You are sorting a file into a data room for Space Launch Technologies.
+
+The file is not a PDF, so you only have its filename to go on: "${file.name}"
+
+Based on the filename:
+
+1. Choose the single best-matching folder from the list below.
+2. Decide if this file should be restricted (post-NDA only). Set isRestricted to true ONLY for patents, technical IP, or highly confidential content.
+3. Return an empty array for diligenceToCheck since the file content is unavailable.
+
+Folders:
+${FOLDERS.join('\n')}
+
+Respond with ONLY a valid JSON object in this exact format, no explanation, no other text:
+{"folder": "FOLDER_PATH_HERE", "isRestricted": false, "diligenceToCheck": []}`
+          }
+        ]
+
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 512,
+      messages: [{ role: 'user', content: userContent }]
     })
 
     const text = response.content.find(b => b.type === 'text')?.text?.trim()

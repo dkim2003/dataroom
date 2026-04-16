@@ -54,6 +54,8 @@ app/
   api/nda-complete/route.js             — Upgrades user role from pre_nda_* to post_nda_* after signing
   api/tutorial-complete/route.js        — Sets has_seen_tutorial = true (uses service role to bypass RLS)
   api/setup/subfolders/route.js         — POST (admin only): creates 27 standard subfolder .keep placeholders
+  api/folder-names/route.js             — GET/POST/DELETE: display name overrides for top-level folders, stored in settings table (key='folder_names')
+  api/folder-order/route.js             — GET/POST: drag-to-reorder folder list, stored in settings table (key='folder_order')
 public/
   favicon.svg                           — Rocket SVG favicon
 ```
@@ -92,7 +94,9 @@ The `documents` API returns both `documents` (files) and `folderPaths` (all fold
 
 **Subfolder display modes:**
 - Grid view: folder cards with preview area (big folder icon), footer (name + three-dot menu), draggable
-- List view: rows matching file list style — NAME / LAST OPENED / three-dot menu columns
+- List view: rows matching file list style — NAME / LAST OPENED / DATE CREATED / three-dot menu columns
+
+**Top-level folder display names:** Right-click a sidebar folder → Rename saves a display name override to `settings` table via `/api/folder-names`. The `folderNames` state maps original storage folder name → display name. Content heading and sidebar both use `folderNames[folder] || folder.replace(/_/g,' ').replace(/^\d+\s+/,'')`. Does NOT rename storage paths.
 
 **Three-dot menu on files:** Open, Download, Rename (move API), Move to trash
 - `openMenuPath` state tracks which file's menu is open; closed via `useEffect` document-level click listener
@@ -109,13 +113,20 @@ The `documents` API returns both `documents` (files) and `folderPaths` (all fold
 
 The `due_diligence` table tracks investor checklist items with `id`, `item`, `position`, `checked` fields. The sort API auto-checks items when matching documents are uploaded.
 
+**settings table** (Supabase Postgres): stores key/value pairs for app config. Must exist — create with:
+```sql
+create table public.settings (key text primary key, value jsonb not null default '{}');
+```
+Current keys: `folder_names` (display name overrides), `folder_order` (sidebar folder order).
+`/api/folder-names` POST uses UPDATE/INSERT (not upsert) to avoid primary key conflicts.
+
 All document views are logged to `audit_log` table. Last-opened timestamps per user come from `/api/activity/user-recents` and are shown in the "Last Opened" column in list view.
 
 ### Document View (dashboard)
 
 - **List/grid toggle** (`docView` state): buttons in top-right of doc library header; `data-tutorial="view-toggle"`
 - **Grid view**: batch-fetches preview URLs via `/api/documents/preview-urls`, then renders PDF thumbnails via PDF.js canvas (not iframe — avoids Chrome PDF toolbar); saved as JPEG data URLs in `pdfThumbnails` state
-- **List view**: shows NAME / LAST OPENED / action columns; last-opened pulled from `userRecents` state
+- **List view**: shows NAME / LAST OPENED / DATE CREATED / action columns — grid `1fr 180px 150px 40px` used consistently across all sections (subfolders, files, links); last-opened pulled from `userRecents` state
 - **No lock styling** on restricted docs in grid — restricted badge shown instead; clicking redirects to NDA
 - **Action bar** (below upload zone, above content): back button left + New folder button right (blue); always rendered when `activeFolder` is set
 - **New folder button**: bright blue styling (`rgba(59,130,246,0.15)` bg, `#93c5fd` text)
@@ -148,6 +159,13 @@ Dashboard shows a spotlight tutorial on first login (tracked via `profiles.has_s
 
 1. **DocuSign fix** — `AUTHORIZATION_INVALID_TOKEN` error from envelope API; investigate JWT auth flow and sandbox configuration
 2. **Pitch deck upload** — upload the actual pitch deck PDF after DocuSign is working
+
+### Recent Fixes (session ending 2026-04-08)
+
+- **Internal links visible to investors** — fixed server-side in `/api/links`: fetches top-level folder names from `internal/` storage prefix and checks `link.folder.split('/')[0]` against that set, instead of trusting the DB `internal` flag (which was always stored as false)
+- **Folder rename not persisting** — root cause: `settings` table didn't exist in Supabase. Created table. Also fixed `saveTopFolderName` to use UPDATE/INSERT instead of upsert (avoids primary key conflict), and checks API response before updating state
+- **Content heading not reflecting rename** — heading now resolves first path segment via `folderNames` state
+- **List view column misalignment** — standardised all list rows (subfolders, files, links) to `1fr 180px 150px 40px`; DATE CREATED now shown for all users (was conditionally hidden for non-employees in file rows)
 
 ### Environment Variables
 
