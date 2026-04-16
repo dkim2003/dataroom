@@ -1007,8 +1007,10 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               if (!confirm(`Delete folder "${displayName}"? All files inside will be moved to trash.`)) return;
                               setContextMenu(null);
                               taskStart('Moving files to trash...');
-                              const folderDocs = documents.filter(d => d.path.split('/')[1] === folderName);
                               const { data: { session } } = await supabase.auth.getSession();
+
+                              // Trash all actual documents in this folder
+                              const folderDocs = documents.filter(d => d.path.split('/')[1] === folderName);
                               for (const doc of folderDocs) {
                                 await fetch('/api/trash', {
                                   method: 'POST',
@@ -1016,6 +1018,17 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                   body: JSON.stringify({ path: doc.path, name: doc.name })
                                 });
                               }
+
+                              // Delete .keep placeholders for this folder and all its subfolders
+                              const relatedPaths = folderPaths.filter(fp => fp.split('/')[1] === folderName);
+                              for (const fp of relatedPaths) {
+                                await fetch('/api/folders', {
+                                  method: 'DELETE',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ keepPath: `${fp}/.keep` })
+                                });
+                              }
+
                               if (folderNames[folderName]) {
                                 await fetch('/api/folder-names', {
                                   method: 'DELETE',
@@ -1025,7 +1038,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 setFolderNames(prev => { const n = { ...prev }; delete n[folderName]; return n; });
                               }
                               await loadDocuments();
-                              taskDone(`"${displayName}" moved to trash`);
+                              taskDone(`"${displayName}" deleted`);
                             }
 
                             async function loadActivity() {
