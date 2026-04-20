@@ -263,6 +263,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const [pitchDeckPages, setPitchDeckPages] = useState([]);
                             const [pitchDeckLoading, setPitchDeckLoading] = useState(false);
                             const [pitchDeckError, setPitchDeckError] = useState(null);
+                            const pitchDeckInputRef = useRef(null);
                             const [folderOrder, setFolderOrder] = useState([]);
                             const [reorderingFolder, setReorderingFolder] = useState(null);
                             const [reorderDropTarget, setReorderDropTarget] = useState(null);
@@ -444,50 +445,66 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
 
                             useEffect(() => {
                               if (activeTab !== 'pitchdeck' || pitchDeckPages.length > 0 || pitchDeckLoading) return;
-                              async function loadPitchDeck() {
-                                setPitchDeckLoading(true);
-                                setPitchDeckError(null);
-                                try {
-                                  const { data: { session } } = await supabase.auth.getSession();
-                                  const res = await fetch('/api/documents', { headers: { authorization: `Bearer ${session.access_token}` } });
-                                  const result = await res.json();
-                                  const pitchDoc = result.documents?.find(d =>
-                                    d.path.includes('01_Pitch_and_Overview') &&
-                                    (d.name.toLowerCase().endsWith('.pdf') || d.mimeType === 'application/pdf')
-                                  );
-                                  if (!pitchDoc) { setPitchDeckError('no_file'); setPitchDeckLoading(false); return; }
-                                  const urlRes = await fetch('/api/documents/signed-url', {
-                                    method: 'POST',
-                                    headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ path: pitchDoc.path, fileName: pitchDoc.name })
-                                  });
-                                  const urlData = await urlRes.json();
-                                  if (!urlData.signedUrl) { setPitchDeckError('url_failed'); setPitchDeckLoading(false); return; }
-                                  const tryRender = async (retries = 8) => {
-                                    const pdfjs = window.pdfjsLib;
-                                    if (!pdfjs) {
-                                      if (retries > 0) { await new Promise(r => setTimeout(r, 600)); return tryRender(retries - 1); }
-                                      setPitchDeckError('pdfjs_unavailable'); setPitchDeckLoading(false); return;
-                                    }
-                                    pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
-                                    const pdf = await pdfjs.getDocument({ url: urlData.signedUrl, withCredentials: false }).promise;
-                                    for (let i = 1; i <= pdf.numPages; i++) {
-                                      const page = await pdf.getPage(i);
-                                      const viewport = page.getViewport({ scale: 1.5 });
-                                      const canvas = document.createElement('canvas');
-                                      canvas.width = viewport.width;
-                                      canvas.height = viewport.height;
-                                      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-                                      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-                                      setPitchDeckPages(prev => [...prev, dataUrl]);
-                                      if (i === 1) setPitchDeckLoading(false);
-                                    }
-                                  };
-                                  tryRender();
-                                } catch (e) { setPitchDeckError(e.message); setPitchDeckLoading(false); }
-                              }
                               loadPitchDeck();
                             }, [activeTab]);
+
+                            async function loadPitchDeck() {
+                              setPitchDeckLoading(true);
+                              setPitchDeckError(null);
+                              setPitchDeckPages([]);
+                              try {
+                                const { data: { session } } = await supabase.auth.getSession();
+                                const res = await fetch('/api/pitch-deck', { headers: { authorization: `Bearer ${session.access_token}` } });
+                                if (res.status === 404) { setPitchDeckError('no_file'); setPitchDeckLoading(false); return; }
+                                const urlData = await res.json();
+                                if (!urlData.signedUrl) { setPitchDeckError('url_failed'); setPitchDeckLoading(false); return; }
+                                const tryRender = async (retries = 8) => {
+                                  const pdfjs = window.pdfjsLib;
+                                  if (!pdfjs) {
+                                    if (retries > 0) { await new Promise(r => setTimeout(r, 600)); return tryRender(retries - 1); }
+                                    setPitchDeckError('pdfjs_unavailable'); setPitchDeckLoading(false); return;
+                                  }
+                                  pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
+                                  const pdf = await pdfjs.getDocument({ url: urlData.signedUrl, withCredentials: false }).promise;
+                                  for (let i = 1; i <= pdf.numPages; i++) {
+                                    const page = await pdf.getPage(i);
+                                    const viewport = page.getViewport({ scale: 1.5 });
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = viewport.width;
+                                    canvas.height = viewport.height;
+                                    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                                    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                                    setPitchDeckPages(prev => [...prev, dataUrl]);
+                                    if (i === 1) setPitchDeckLoading(false);
+                                  }
+                                };
+                                tryRender();
+                              } catch (e) { setPitchDeckError(e.message); setPitchDeckLoading(false); }
+                            }
+
+                            async function uploadPitchDeck(file) {
+                              if (!file) return;
+                              if (!file.name.toLowerCase().endsWith('.pdf')) {
+                                alert('Pitch deck must be a PDF.');
+                                return;
+                              }
+                              taskStart('Uploading pitch deck...');
+                              const { data: { session } } = await supabase.auth.getSession();
+                              const formData = new FormData();
+                              formData.append('file', file);
+                              const res = await fetch('/api/pitch-deck', {
+                                method: 'POST',
+                                headers: { authorization: `Bearer ${session.access_token}` },
+                                body: formData
+                              });
+                              const result = await res.json();
+                              if (result.error) {
+                                taskDone('Upload failed', 'error');
+                                return;
+                              }
+                              taskDone('Pitch deck updated');
+                              await loadPitchDeck();
+                            }
 
                             async function loadDocuments() {
                               const { data: { session } } = await supabase.auth.getSession();
@@ -685,7 +702,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               const sortRes = await fetch('/api/sort-link', {
                                 method: 'POST',
                                 headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ name, url })
+                                body: JSON.stringify({ name, url, folderPaths })
                               });
                               const sortResult = await sortRes.json();
                               if (sortResult.error) { taskDone('Failed to sort link', 'error'); return; }
@@ -1050,6 +1067,14 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 });
                               }
 
+                              // Sweep any remaining sentinel placeholders (e.g. .emptyFolderPlaceholder
+                              // created by Supabase's dashboard UI) so the folder truly disappears.
+                              await fetch('/api/folders/purge', {
+                                method: 'POST',
+                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ folderName })
+                              });
+
                               if (folderNames[folderName]) {
                                 await fetch('/api/folder-names', {
                                   method: 'DELETE',
@@ -1057,6 +1082,13 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                   body: JSON.stringify({ original: folderName })
                                 });
                                 setFolderNames(prev => { const n = { ...prev }; delete n[folderName]; return n; });
+                              }
+                              // Remove from folder order so it disappears from sidebar
+                              const newOrder = folderOrder.filter(f => f !== folderName);
+                              setFolderOrder(newOrder);
+                              await saveFolderOrder(newOrder);
+                              if (activeFolder === folderName || activeFolder?.startsWith(folderName + '/')) {
+                                setActiveFolder(null);
                               }
                               await loadDocuments();
                               taskDone(`"${displayName}" deleted`);
@@ -1170,6 +1202,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               taskStart('Sorting with Sol...');
                               const sortForm = new FormData();
                               sortForm.append('file', file);
+                              sortForm.append('folderPaths', JSON.stringify(folderPaths));
                               let sortResult;
                               try {
                                 const sortResponse = await fetch('/api/sort', {
@@ -1272,9 +1305,16 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
 
                             async function handleMoveDoc(doc, targetFolder) {
                               const parts = doc.path.split('/');
-                              const prefix = parts[0]; // 'general' or 'restricted'
                               const filename = parts[parts.length - 1];
-                              const newPath = `${prefix}/${targetFolder}/${filename}`;
+                              // Determine the correct storage prefix for the target folder
+                              const topTarget = targetFolder.split('/')[0];
+                              let targetPrefix = 'general';
+                              if (folderPaths.some(fp => fp.startsWith('internal/') && fp.split('/')[1] === topTarget)) {
+                                targetPrefix = 'internal';
+                              } else if (folderPaths.some(fp => fp.startsWith('restricted/') && fp.split('/')[1] === topTarget)) {
+                                targetPrefix = 'restricted';
+                              }
+                              const newPath = `${targetPrefix}/${targetFolder}/${filename}`;
                               if (newPath === doc.path) return;
                               taskStart('Moving file...');
                               setMovingDocPath(doc.path);
@@ -1298,9 +1338,18 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               });
                               if (folderDocs.length === 0) return;
                               taskStart('Moving folder...');
+                              // Determine the correct storage prefix for the target folder
+                              const topTarget = targetFolder.split('/')[0];
+                              let targetPrefix = 'general';
+                              if (folderPaths.some(fp => fp.startsWith('internal/') && fp.split('/')[1] === topTarget)) {
+                                targetPrefix = 'internal';
+                              } else if (folderPaths.some(fp => fp.startsWith('restricted/') && fp.split('/')[1] === topTarget)) {
+                                targetPrefix = 'restricted';
+                              }
                               const { data: { session } } = await supabase.auth.getSession();
                               for (const doc of folderDocs) {
                                 const p = doc.path.split('/');
+                                p[0] = targetPrefix;
                                 p[1] = targetFolder;
                                 const newPath = p.join('/');
                                 await fetch('/api/documents/move', {
@@ -1429,6 +1478,13 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                   body: JSON.stringify({ keepPath: `${fp}/.keep` })
                                 });
                               }
+                              // Sweep any remaining sentinel placeholders (e.g. .emptyFolderPlaceholder
+                              // created by Supabase's dashboard UI) so the folder truly disappears.
+                              await fetch('/api/folders/purge', {
+                                method: 'POST',
+                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ folderName })
+                              });
                               // Remove from folder order
                               const newOrder = folderOrder.filter(f => f !== folderName);
                               setFolderOrder(newOrder);
@@ -1604,9 +1660,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
   const isPostNda = profile.role === 'post_nda_investor' || profile.role === 'post_nda_employee';
   const isEmployee = profile.role === 'pre_nda_employee' || profile.role === 'post_nda_employee';
 
-  const FALLBACK_FOLDERS = ['00_START_HERE','01_Pitch_and_Overview','02_Market_Opportunity','03_Product_Technology','04_Traction','05_Financials','06_Legal','07_Team','08_Fundraising','09_Investor_Updates','10_Appendix'];
   const allTopFolders = [...new Set(folderPaths.filter(fp => fp.split('/').length === 2).map(fp => fp.split('/')[1]))];
-  const baseFolders = [...new Set([...FALLBACK_FOLDERS, ...allTopFolders])];
+  const baseFolders = [...new Set(allTopFolders)];
   const folders = folderOrder.length > 0
     ? [...folderOrder.filter(f => baseFolders.includes(f)), ...baseFolders.filter(f => !folderOrder.includes(f))]
     : baseFolders;
@@ -2228,7 +2283,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     }}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-                    {activeFolder?.split('/').slice(0, -1).map(p => p.replace(/_/g, ' ').replace(/^\d+\s+/, '')).join(' / ')}
+                    {activeFolder?.split('/').slice(0, -1).map(p => folderNames[p] || p.replace(/_/g, ' ').replace(/^\d+\s+/, '')).join(' / ')}
                   </button>
                   {/* New folder — right side */}
                   {(isEmployee || isAdmin) && (() => {
@@ -3275,8 +3330,30 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
           {/* Pitch Deck */}
           {activeTab === 'pitchdeck' && (
             <div>
-              <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', marginBottom: '6px' }}>PITCH DECK</h1>
-              <p style={{ fontSize: '14px', color: '#777', marginBottom: '28px' }}>Space Launch Technologies — Series A</p>
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '28px' }}>
+                <div>
+                  <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', marginBottom: '6px' }}>PITCH DECK</h1>
+                  <p style={{ fontSize: '14px', color: '#777' }}>Space Launch Technologies — Series A</p>
+                </div>
+                {(isEmployee || isAdmin) && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <input
+                      ref={pitchDeckInputRef}
+                      type="file"
+                      accept="application/pdf,.pdf"
+                      style={{ display: 'none' }}
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadPitchDeck(f); e.target.value = ''; }}
+                    />
+                    <button
+                      onClick={() => pitchDeckInputRef.current?.click()}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', background: '#3b82f6', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                      Upload file
+                    </button>
+                  </div>
+                )}
+              </div>
               {pitchDeckLoading && (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '80px', color: '#555' }}>
                   <div style={{ width: '28px', height: '28px', border: '2px solid #333', borderTop: '2px solid #888', borderRadius: '50%', animation: 'spin 0.8s linear infinite', marginBottom: '16px' }} />
@@ -3290,7 +3367,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     <line x1="8" y1="21" x2="16" y2="21"/>
                     <line x1="12" y1="17" x2="12" y2="21"/>
                   </svg>
-                  <p style={{ fontSize: '15px', color: '#666' }}>{isAdmin ? 'Upload the pitch deck PDF to the 01_Pitch_and_Overview folder to display it here.' : 'Pitch deck will appear here once uploaded by the administrator.'}</p>
+                  <p style={{ fontSize: '15px', color: '#666' }}>{(isEmployee || isAdmin) ? 'Click "Upload file" to add the pitch deck PDF.' : 'Pitch deck will appear here once uploaded by the team.'}</p>
                 </div>
               )}
               {!pitchDeckLoading && pitchDeckError && pitchDeckError !== 'no_file' && (

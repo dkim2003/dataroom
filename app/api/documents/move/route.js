@@ -47,11 +47,16 @@ export async function POST(request) {
     if (!isSafeStoragePath(oldPath, MOVE_ALLOWED_PREFIXES) || !isSafeStoragePath(newPath, MOVE_ALLOWED_PREFIXES)) {
       return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
     }
-    // Prevent cross-prefix moves — an employee must not be able to re-shelf
-    // a restricted/internal file as general/, which would grant pre-NDA
-    // investors read access to it.
-    if (topLevelPrefix(oldPath) !== topLevelPrefix(newPath)) {
-      return NextResponse.json({ error: 'Cannot move between top-level prefixes' }, { status: 400 })
+    // Prevent moves that would lower a file's restriction level (e.g. internal → general
+    // would expose employee-only files to investors). Escalating moves (general → internal,
+    // general → restricted) are allowed so admins/employees can re-classify documents.
+    const RESTRICTION_LEVEL = { general: 0, restricted: 1, internal: 2 }
+    const oldPrefix = topLevelPrefix(oldPath)
+    const newPrefix = topLevelPrefix(newPath)
+    if (oldPrefix !== newPrefix) {
+      if ((RESTRICTION_LEVEL[oldPrefix] ?? 0) > (RESTRICTION_LEVEL[newPrefix] ?? 0)) {
+        return NextResponse.json({ error: 'Cannot move to a less restricted prefix' }, { status: 400 })
+      }
     }
 
     // Step 1 — download from old path

@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { checkRateLimit } from '@/lib/rateLimit'
+import { isSafeRelativePath } from '@/lib/pathSafety'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -11,54 +12,21 @@ const supabase = createClient(
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 const ADMIN_EMAIL = 'contact@kimduhyun.com'
+const STORAGE_PREFIXES = ['general', 'restricted', 'internal']
 
-const FOLDERS = [
-  '00_START_HERE/Investor Guide',
-  '01_Pitch_and_Overview/01 Pitch Deck',
-  '01_Pitch_and_Overview/02 Executive Summary',
-  '01_Pitch_and_Overview/03 Company Overview',
-  '02_Market_Opportunity/01 Industrial Research',
-  '02_Market_Opportunity/02 Competitor Analysis',
-  '02_Market_Opportunity/03 Customer Segments',
-  '03_Product_Technology/01 Product Overview',
-  '03_Product_Technology/02 Engineering Architecture',
-  '03_Product_Technology/03 R&D Roadmap',
-  '03_Product_Technology/04 Patents & IP',
-  '04_Traction/01 Revenue Growth',
-  '04_Traction/02 Users & Customers',
-  '04_Traction/03 Contracts',
-  '04_Traction/04 Partnerships',
-  '04_Traction/05 Testimonials',
-  '05_Financials/01 3-5 Year Financial Model',
-  '05_Financials/02 Revenue Projections',
-  '05_Financials/03 Cost Structure',
-  '05_Financials/04 Burn Rate',
-  '05_Financials/Break-Even Analysis',
-  '06_Legal/01 Articles of Incorporation',
-  '06_Legal/02 Shareholder Agreements',
-  '06_Legal/03 IP Assignments',
-  '06_Legal/04 NDAs',
-  '06_Legal/05 Employment Agreements',
-  '07_Team/01 Founder Bios',
-  '07_Team/02 Advisor List',
-  '07_Team/03 Org Chart',
-  '07_Team/04 Hiring Plan',
-  '08_Fundraising/01 Cap Table',
-  '08_Fundraising/02 Investment Structure',
-  '08_Fundraising/03 Valuation',
-  '08_Fundraising/04 Investor Rights',
-  '08_Fundraising/05 Funding Timeline',
-  '09_Investor_Updates/01 Monthly Updates',
-  '09_Investor_Updates/02 Milestones',
-  '09_Investor_Updates/03 Achievements',
-  '10_Appendix/01 Research Papers',
-  '10_Appendix/02 Technical Drawings',
-  '10_Appendix/03 Legal References',
-]
+// Strip the leading storage prefix (general/, restricted/, internal/) from a
+// stored folder path so Claude sees only the logical folder structure.
+// Returns null if the path has no prefix segment.
+function stripPrefix(fp) {
+  const parts = fp.split('/')
+  if (parts.length < 2) return null
+  if (!STORAGE_PREFIXES.includes(parts[0])) return null
+  return parts.slice(1).join('/')
+}
 
 // POST /api/sort
-// Accepts a multipart form with: file (PDF)
-// Returns: { folder: string, isRestricted: boolean }
+// Accepts a multipart form with: file (PDF), folderPaths (JSON-stringified array of current folder paths)
+// Returns: { folder: string, isRestricted: boolean, diligenceChecked: number[] }
 export async function POST(request) {
   try {
     const authHeader = request.headers.get('authorization')
@@ -89,6 +57,36 @@ export async function POST(request) {
       return NextResponse.json({ error: 'File exceeds 100 MB limit' }, { status: 413 })
     }
 
+    // Parse folderPaths (sent from the client so Claude sees the CURRENT folder
+    // structure, not a stale hardcoded list). Expected: JSON array of strings
+    // like "general/01_X", "general/01_X/SubFolder", etc.
+    let rawFolderPaths = []
+    try {
+      const raw = formData.get('folderPaths')
+      if (typeof raw === 'string' && raw.length > 0) {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed)) rawFolderPaths = parsed
+      }
+    } catch {
+      rawFolderPaths = []
+    }
+
+    // Strip storage prefixes, keep only safe subpaths, dedupe. Cap at 500 to
+    // keep the prompt sized reasonably.
+    const folderSet = new Set()
+    for (const fp of rawFolderPaths) {
+      if (typeof fp !== 'string') continue
+      const stripped = stripPrefix(fp)
+      if (!stripped) continue
+      if (!isSafeRelativePath(stripped)) continue
+      folderSet.add(stripped)
+    }
+    const availableFolders = Array.from(folderSet).slice(0, 500)
+
+    if (availableFolders.length === 0) {
+      return NextResponse.json({ error: 'No folders available — create a folder before uploading' }, { status: 400 })
+    }
+
     const bytes = await file.arrayBuffer()
     if (bytes.byteLength > MAX_SORT_BYTES) {
       return NextResponse.json({ error: 'File exceeds 100 MB limit' }, { status: 413 })
@@ -107,6 +105,8 @@ export async function POST(request) {
       .map(d => `${d.position}: ${d.item}`)
       .join('\n')
 
+    const folderList = availableFolders.join('\n')
+
     const userContent = isPdf
       ? [
           {
@@ -120,12 +120,12 @@ export async function POST(request) {
 
 Based on the content of this document:
 
-1. Choose the single best-matching folder from the list below.
+1. Choose the single best-matching folder from the list below. You MUST return an exact string from the list.
 2. Decide if this document should be restricted (post-NDA only). Set isRestricted to true ONLY for patents, white papers, detailed technical IP, or highly confidential content.
 3. Check off any due diligence items that this document satisfies. Return their position numbers as an array.
 
 Folders:
-${FOLDERS.join('\n')}
+${folderList}
 
 Due diligence checklist (position: item):
 ${diligenceList}
@@ -143,12 +143,12 @@ The file is not a PDF, so you only have its filename to go on: "${file.name}"
 
 Based on the filename:
 
-1. Choose the single best-matching folder from the list below.
+1. Choose the single best-matching folder from the list below. You MUST return an exact string from the list.
 2. Decide if this file should be restricted (post-NDA only). Set isRestricted to true ONLY for patents, technical IP, or highly confidential content.
 3. Return an empty array for diligenceToCheck since the file content is unavailable.
 
 Folders:
-${FOLDERS.join('\n')}
+${folderList}
 
 Respond with ONLY a valid JSON object in this exact format, no explanation, no other text:
 {"folder": "FOLDER_PATH_HERE", "isRestricted": false, "diligenceToCheck": []}`
@@ -167,12 +167,13 @@ Respond with ONLY a valid JSON object in this exact format, no explanation, no o
     try {
       result = JSON.parse(text)
     } catch {
-      result = { folder: '10_Appendix/01 Research Papers', isRestricted: false, diligenceToCheck: [] }
+      result = { folder: availableFolders[0], isRestricted: false, diligenceToCheck: [] }
     }
 
-    // Validate the returned folder is in our list
-    if (!FOLDERS.includes(result.folder)) {
-      result.folder = '10_Appendix/01 Research Papers'
+    // Validate the returned folder is in our dynamic list; otherwise fall back
+    // to the first available folder so the client always receives a valid path.
+    if (!availableFolders.includes(result.folder)) {
+      result.folder = availableFolders[0]
     }
 
     const diligenceToCheck = Array.isArray(result.diligenceToCheck) ? result.diligenceToCheck : []

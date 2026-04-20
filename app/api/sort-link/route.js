@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import { checkRateLimit } from '@/lib/rateLimit'
+import { isSafeSegment } from '@/lib/pathSafety'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -10,12 +11,7 @@ const supabase = createClient(
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 const ADMIN_EMAIL = 'contact@kimduhyun.com'
-
-const FOLDERS = [
-  '00_START_HERE', '01_Pitch_and_Overview', '02_Market_Opportunity',
-  '03_Product_Technology', '04_Traction', '05_Financials',
-  '06_Legal', '07_Team', '08_Fundraising', '09_Investor_Updates', '10_Appendix'
-]
+const STORAGE_PREFIXES = ['general', 'restricted', 'internal']
 
 export async function POST(request) {
   try {
@@ -35,8 +31,28 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Rate limit exceeded' }, { status: 429 })
     }
 
-    const { name, url } = await request.json()
+    const { name, url, folderPaths: rawFolderPaths } = await request.json()
     if (!name || !url) return NextResponse.json({ error: 'name and url required' }, { status: 400 })
+
+    // Build the current top-level folder list from what the client sent.
+    // Links live at the top level, so we only surface top-level folder names.
+    const topLevelSet = new Set()
+    if (Array.isArray(rawFolderPaths)) {
+      for (const fp of rawFolderPaths) {
+        if (typeof fp !== 'string') continue
+        const parts = fp.split('/')
+        if (parts.length < 2) continue
+        if (!STORAGE_PREFIXES.includes(parts[0])) continue
+        const top = parts[1]
+        if (!isSafeSegment(top)) continue
+        topLevelSet.add(top)
+      }
+    }
+    const topFolders = Array.from(topLevelSet).slice(0, 200)
+
+    if (topFolders.length === 0) {
+      return NextResponse.json({ error: 'No folders available — create a folder before adding a link' }, { status: 400 })
+    }
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
@@ -48,8 +64,8 @@ export async function POST(request) {
 Link name: "${name}"
 URL: "${url}"
 
-Pick the most appropriate folder from this list:
-${FOLDERS.map(f => `- ${f}`).join('\n')}
+Pick the most appropriate folder from this list. You MUST return one of these exact strings:
+${topFolders.map(f => `- ${f}`).join('\n')}
 
 Also decide if this link should be restricted (post-NDA only). Mark as restricted if it relates to financials, patents, legal agreements, technical architecture, or any sensitive business information.
 
@@ -57,9 +73,14 @@ Reply with JSON only, no markdown: {"folder": "exact_folder_name", "isRestricted
       }]
     })
 
-    const text = message.content[0].text.trim().replace(/```json\n?|\n?```/g, '')
-    const result = JSON.parse(text)
-    const folder = FOLDERS.includes(result.folder) ? result.folder : '10_Appendix'
+    let result
+    try {
+      const text = message.content[0].text.trim().replace(/```json\n?|\n?```/g, '')
+      result = JSON.parse(text)
+    } catch {
+      result = { folder: topFolders[0], isRestricted: false }
+    }
+    const folder = topFolders.includes(result.folder) ? result.folder : topFolders[0]
 
     return NextResponse.json({ folder, isRestricted: !!result.isRestricted })
   } catch {
