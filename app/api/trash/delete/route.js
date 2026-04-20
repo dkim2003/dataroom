@@ -26,11 +26,18 @@ export async function POST(request) {
     const { data: trashRecord } = await supabase.from('trash').select('*').eq('id', trashId).single()
     if (!trashRecord) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
+    // A private file in trash can only be permanently deleted by its owner or an admin.
+    if (trashRecord.original_path?.startsWith('private/')) {
+      const pathUserId = trashRecord.original_path.split('/')[1]
+      if (pathUserId !== user.id && !isAdmin)
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     await supabase.storage.from('documents').remove([`trash/${trashRecord.id}/${trashRecord.file_name}`])
     await supabase.from('trash').delete().eq('id', trashId)
 
     return NextResponse.json({ success: true })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

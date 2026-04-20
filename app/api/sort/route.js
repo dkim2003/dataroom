@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
+import { checkRateLimit } from '@/lib/rateLimit'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -68,23 +69,30 @@ export async function POST(request) {
     if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     // Allow admin or employees only
-    const isAdmin = user.email === ADMIN_EMAIL
-    if (!isAdmin) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
-        .single()
+    const { data: profile } = await supabase.from('profiles').select('role, is_admin').eq('id', user.id).single()
+    const isAdmin = user.email === ADMIN_EMAIL || profile?.is_admin === true
+    const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
+    if (!isAdmin && !isEmployee) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-      const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
-      if (!isEmployee) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    if (!checkRateLimit(`sort:${user.id}`, 20, 5 * 60 * 1000)) {
+      return NextResponse.json({ error: 'Rate limit exceeded' }, { status: 429 })
     }
 
     const formData = await request.formData()
     const file = formData.get('file')
     if (!file) return NextResponse.json({ error: 'No file provided' }, { status: 400 })
 
+    // Enforce a size limit to prevent memory exhaustion — the entire file is
+    // loaded into memory and base64-encoded before sending to Claude.
+    const MAX_SORT_BYTES = 100 * 1024 * 1024 // 100 MB
+    if (typeof file.size === 'number' && file.size > MAX_SORT_BYTES) {
+      return NextResponse.json({ error: 'File exceeds 100 MB limit' }, { status: 413 })
+    }
+
     const bytes = await file.arrayBuffer()
+    if (bytes.byteLength > MAX_SORT_BYTES) {
+      return NextResponse.json({ error: 'File exceeds 100 MB limit' }, { status: 413 })
+    }
     const base64 = Buffer.from(bytes).toString('base64')
 
     const isPdf = base64.startsWith('JVBERi')
@@ -189,7 +197,7 @@ Respond with ONLY a valid JSON object in this exact format, no explanation, no o
       diligenceChecked: diligenceToCheck
     })
 
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

@@ -19,6 +19,7 @@ export async function POST(request) {
     const { data: profile } = await supabase.from('profiles').select('role, is_admin').eq('id', user.id).single()
     const isAdmin = user.email === ADMIN_EMAIL || profile?.is_admin === true
     const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
+    const hasRestrictedAccess = isAdmin || profile?.role === 'post_nda_investor' || profile?.role === 'post_nda_employee'
     if (!isAdmin && !isEmployee) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
     const { trashId } = await request.json()
@@ -27,11 +28,23 @@ export async function POST(request) {
       .from('trash').select('*').eq('id', trashId).single()
     if (fetchError || !trashRecord) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
+    // A private file can only be restored by its original owner or an admin.
+    if (trashRecord.original_path?.startsWith('private/')) {
+      const pathUserId = trashRecord.original_path.split('/')[1]
+      if (pathUserId !== user.id && !isAdmin)
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    // Pre-NDA employees cannot restore restricted files
+    if (trashRecord.original_path?.startsWith('restricted/') && !hasRestrictedAccess) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const trashPath = `trash/${trashRecord.id}/${trashRecord.file_name}`
 
     // Download from trash
     const { data: fileData, error: downloadError } = await supabase.storage.from('documents').download(trashPath)
-    if (downloadError) return NextResponse.json({ error: downloadError.message }, { status: 500 })
+    if (downloadError) return NextResponse.json({ error: 'Server error' }, { status: 500 })
 
     // Restore to original path (add suffix if conflict)
     let restorePath = trashRecord.original_path
@@ -52,14 +65,14 @@ export async function POST(request) {
       contentType: fileData.type || 'application/octet-stream',
       upsert: false
     })
-    if (uploadError) return NextResponse.json({ error: uploadError.message }, { status: 500 })
+    if (uploadError) return NextResponse.json({ error: 'Server error' }, { status: 500 })
 
     // Remove from trash storage and DB
     await supabase.storage.from('documents').remove([trashPath])
     await supabase.from('trash').delete().eq('id', trashId)
 
     return NextResponse.json({ success: true })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

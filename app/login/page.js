@@ -84,23 +84,23 @@ export default function LoginPage() {
     setLoading(true);
     setError('');
 
-    const role = step === 'investor' ? 'pre_nda_investor' : 'pre_nda_employee';
+    // Role is assigned server-side from userType — never trust a client-supplied role.
+    const userType = step === 'investor' ? 'investor' : 'employee';
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { full_name: fullName, role }
-      }
+    const res = await fetch('/api/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, fullName, userType })
     });
+    const result = await res.json();
 
-    if (error) {
-      // If the email is already registered, try to re-request access if rejected
-      if (error.message.toLowerCase().includes('already registered') || error.message.toLowerCase().includes('already been registered')) {
+    if (!res.ok) {
+      const msg = (result.error || '').toLowerCase();
+      if (msg.includes('already registered') || msg.includes('already been registered') || msg.includes('user already')) {
         await handleReRequest();
         return;
       }
-      setError(error.message);
+      setError(result.error || 'Signup failed');
       setLoading(false);
       return;
     }

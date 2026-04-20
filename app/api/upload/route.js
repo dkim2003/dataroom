@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { isSafeSegment, isSafeRelativePath } from '@/lib/pathSafety'
 
 // This route runs server-side only — the service role key is never exposed to the browser.
 // We use the SERVICE ROLE key here (not the anon key) because we need to bypass RLS
@@ -10,12 +11,16 @@ const supabase = createClient(
 )
 
 const ADMIN_EMAIL = 'contact@kimduhyun.com'
+// Upload ceiling — anything bigger almost certainly isn't a real VDR artifact
+// and is more likely a mistake or an attempt to exhaust storage. Matches
+// typical investor-doc sizes (pitch decks, CIMs, financials) with headroom.
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024 // 100 MB
 
 // POST /api/upload
-// Accepts a multipart form with: file, folder, isRestricted
+// Accepts a multipart form with: file, folder, isRestricted, isInternal, isPrivate, privateSubfolder
 export async function POST(request) {
   try {
-    // Step 1 — verify the user is logged in and is admin
+    // Step 1 — verify the user is logged in
     const authHeader = request.headers.get('authorization')
     if (!authHeader) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -28,9 +33,15 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { data: profile } = await supabase.from('profiles').select('role, is_admin').eq('id', user.id).single()
+    const { data: profile } = await supabase.from('profiles').select('role, is_admin, status').eq('id', user.id).single()
     const isAdmin = user.email === ADMIN_EMAIL || profile?.is_admin === true
     const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
+    // Pending/rejected accounts are not allowed to write anything to storage,
+    // including their own private folder. An admin still needs to approve them first.
+    const isBlockedStatus = profile?.status === 'pending' || profile?.status === 'rejected'
+    if (!isAdmin && isBlockedStatus) {
+      return NextResponse.json({ error: 'Account not approved' }, { status: 403 })
+    }
 
     // Step 2 — parse the uploaded file from the form
     const formData = await request.formData()
@@ -41,55 +52,81 @@ export async function POST(request) {
     const isPrivate = formData.get('isPrivate') === 'true'
     const privateSubfolder = formData.get('privateSubfolder') || ''
 
-    if (!file) {
+    if (!file || typeof file.name !== 'string') {
       return NextResponse.json({ error: 'Missing file' }, { status: 400 })
     }
 
-    // Private upload — any authenticated user can upload to their own private folder
+    // File name becomes the final path segment — must be safe (no `/`, `\`,
+    // `..`, null bytes, control chars). Rejects browser-supplied quirks like
+    // an empty name, "../../etc/passwd", or "evil\x00.pdf".
+    const safeFileName = file.name.trim()
+    if (!isSafeSegment(safeFileName)) {
+      return NextResponse.json({ error: 'Invalid file name' }, { status: 400 })
+    }
+
+    // Enforce a server-side size limit. Relying on the browser "max file size"
+    // attribute is not a defense — clients can send whatever they want.
+    if (typeof file.size === 'number' && file.size > MAX_UPLOAD_BYTES) {
+      return NextResponse.json({ error: 'File exceeds 100 MB limit' }, { status: 413 })
+    }
+
+    // Private upload — approved users may upload to their own private folder.
     if (isPrivate) {
+      if (privateSubfolder && !isSafeRelativePath(String(privateSubfolder))) {
+        return NextResponse.json({ error: 'Invalid privateSubfolder' }, { status: 400 })
+      }
       const bytes = await file.arrayBuffer()
+      if (bytes.byteLength > MAX_UPLOAD_BYTES) {
+        return NextResponse.json({ error: 'File exceeds 100 MB limit' }, { status: 413 })
+      }
       const buffer = Buffer.from(bytes)
       const path = privateSubfolder
-        ? `private/${user.id}/${privateSubfolder}/${file.name}`
-        : `private/${user.id}/${file.name}`
+        ? `private/${user.id}/${privateSubfolder}/${safeFileName}`
+        : `private/${user.id}/${safeFileName}`
       const { error: uploadError } = await supabase.storage
         .from('documents')
         .upload(path, buffer, { contentType: file.type, upsert: true })
-      if (uploadError) return NextResponse.json({ error: uploadError.message }, { status: 500 })
+      if (uploadError) return NextResponse.json({ error: 'Server error' }, { status: 500 })
       return NextResponse.json({ success: true, path })
     }
 
-    // Non-private uploads require employee or admin
+    // Non-private uploads require employee or admin.
     if (!isAdmin && !isEmployee) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    if (!folder) {
-      return NextResponse.json({ error: 'Missing folder' }, { status: 400 })
+    if (!folder || typeof folder !== 'string' || !isSafeRelativePath(folder)) {
+      return NextResponse.json({ error: 'Missing or invalid folder' }, { status: 400 })
     }
 
-    // Step 3 — build the storage path
-    // isRestricted files go into restricted/ prefix so we can check access by path
+    // Step 3 — build the storage path.
+    // isRestricted files go into restricted/ prefix so we can check access by path.
     const prefix = isInternal ? 'internal' : (isRestricted ? 'restricted' : 'general')
     const bytes = await file.arrayBuffer()
+    if (bytes.byteLength > MAX_UPLOAD_BYTES) {
+      return NextResponse.json({ error: 'File exceeds 100 MB limit' }, { status: 413 })
+    }
     const buffer = Buffer.from(bytes)
-    const path = `${prefix}/${folder}/${file.name}`
+    const path = `${prefix}/${folder}/${safeFileName}`
 
     // Step 4 — upload to Supabase Storage
     const { error: uploadError } = await supabase.storage
       .from('documents')
       .upload(path, buffer, {
         contentType: file.type,
-        upsert: true // overwrite if file already exists
+        upsert: false
       })
 
     if (uploadError) {
-      return NextResponse.json({ error: uploadError.message }, { status: 500 })
+      if (uploadError.message?.includes('already exists')) {
+        return NextResponse.json({ error: 'A file with that name already exists in this folder' }, { status: 409 })
+      }
+      return NextResponse.json({ error: 'Server error' }, { status: 500 })
     }
 
     return NextResponse.json({ success: true, path })
 
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

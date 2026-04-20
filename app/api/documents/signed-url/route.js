@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { isSafeRelativePath } from '@/lib/pathSafety'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -31,6 +32,9 @@ export async function POST(request) {
     const hasInternalAccess = isAdmin || isEmployee
 
     const { path, fileName } = await request.json()
+    if (typeof path !== 'string' || !isSafeRelativePath(path)) {
+      return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
+    }
     const isRestricted = path.startsWith('restricted/')
     const isInternal = path.startsWith('internal/')
 
@@ -55,7 +59,7 @@ export async function POST(request) {
       .from('documents')
       .createSignedUrl(path, 60)
 
-    if (urlError) return NextResponse.json({ error: urlError.message }, { status: 500 })
+    if (urlError) return NextResponse.json({ error: 'Server error' }, { status: 500 })
 
     await supabase.from('audit_log').insert({
       user_id: user.id,
@@ -66,7 +70,7 @@ export async function POST(request) {
 
     return NextResponse.json({ signedUrl: data.signedUrl })
 
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

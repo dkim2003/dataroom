@@ -34,7 +34,7 @@ export async function GET(request) {
       supabase.storage.from('documents').list('internal', { limit: 500 })
     ])
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: 'Server error' }, { status: 500 })
 
     // Build set of top-level internal folder names from storage
     const internalFolderNames = new Set((internalFolderData || []).map(f => f.name))
@@ -50,8 +50,25 @@ export async function GET(request) {
     })
 
     return NextResponse.json({ links: filtered })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
+  }
+}
+
+// Only http(s) URLs are stored. javascript:, data:, vbscript:, file:, etc
+// are blocked to prevent stored-XSS via the "Open" button on links.
+function normalizeLinkUrl(raw) {
+  if (typeof raw !== 'string') return null
+  let url = raw.trim()
+  if (!url) return null
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = 'https://' + url
+  try {
+    const parsed = new URL(url)
+    const proto = parsed.protocol.toLowerCase()
+    if (proto !== 'http:' && proto !== 'https:') return null
+    return parsed.href
+  } catch {
+    return null
   }
 }
 
@@ -70,20 +87,23 @@ export async function POST(request) {
     if (!name?.trim() || !url?.trim() || !folder?.trim())
       return NextResponse.json({ error: 'name, url and folder are required' }, { status: 400 })
 
+    const safeUrl = normalizeLinkUrl(url)
+    if (!safeUrl) return NextResponse.json({ error: 'Only http(s) URLs are allowed' }, { status: 400 })
+
     const { data, error } = await supabase
       .from('document_links')
-      .insert({ name: name.trim(), url: url.trim(), folder, restricted: !!restricted, internal: !!internal, created_by: user.id })
+      .insert({ name: name.trim(), url: safeUrl, folder, restricted: !!restricted, internal: !!internal, created_by: user.id })
       .select()
       .single()
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: 'Server error' }, { status: 500 })
     return NextResponse.json({ link: data })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }
 
-// PATCH /api/links — rename a link
+// PATCH /api/links — rename a link (creator or admin only)
 export async function PATCH(request) {
   try {
     const auth = await verifyUser(request)
@@ -94,15 +114,21 @@ export async function PATCH(request) {
     if (!isEmployee && !isAdmin) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     const { id, name } = await request.json()
     if (!id || !name?.trim()) return NextResponse.json({ error: 'id and name required' }, { status: 400 })
+
+    const { data: existing } = await supabase.from('document_links').select('created_by').eq('id', id).single()
+    if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    if (existing.created_by !== user.id && !isAdmin)
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
     const { data, error } = await supabase.from('document_links').update({ name: name.trim() }).eq('id', id).select().single()
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: 'Server error' }, { status: 500 })
     return NextResponse.json({ link: data })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }
 
-// DELETE /api/links — delete a link by id
+// DELETE /api/links — delete a link by id (creator or admin only)
 export async function DELETE(request) {
   try {
     const auth = await verifyUser(request)
@@ -114,10 +140,17 @@ export async function DELETE(request) {
     if (!isEmployee && !isAdmin) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
     const { id } = await request.json()
+    if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
+
+    const { data: existing } = await supabase.from('document_links').select('created_by').eq('id', id).single()
+    if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    if (existing.created_by !== user.id && !isAdmin)
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
     const { error } = await supabase.from('document_links').delete().eq('id', id)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: 'Server error' }, { status: 500 })
     return NextResponse.json({ success: true })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

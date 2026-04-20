@@ -29,12 +29,33 @@ export async function GET(request) {
       .select('*')
       .order('created_at', { ascending: false })
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: 'Server error' }, { status: 500 })
     return NextResponse.json({ profiles: data })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }
+
+// Whitelist of columns admins can modify via this endpoint. Prevents an admin
+// (or an attacker who has compromised an admin session) from writing to
+// sensitive columns like docusign_envelope_id, id, created_at, etc.
+const ALLOWED_PROFILE_FIELDS = new Set([
+  'status',
+  'role',
+  'is_admin',
+  'full_name',
+  'email_verified',
+  'has_seen_tutorial',
+])
+
+const ALLOWED_ROLES = new Set([
+  'pre_nda_investor',
+  'post_nda_investor',
+  'pre_nda_employee',
+  'post_nda_employee',
+])
+
+const ALLOWED_STATUSES = new Set(['pending', 'approved', 'rejected'])
 
 export async function PATCH(request) {
   try {
@@ -42,11 +63,35 @@ export async function PATCH(request) {
     if (!user) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
     const { userId, updates } = await request.json()
-    const { error } = await supabase.from('profiles').update(updates).eq('id', userId)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (!userId || !updates || typeof updates !== 'object') {
+      return NextResponse.json({ error: 'userId and updates required' }, { status: 400 })
+    }
+
+    // Filter to only whitelisted fields
+    const safeUpdates = {}
+    for (const [key, value] of Object.entries(updates)) {
+      if (!ALLOWED_PROFILE_FIELDS.has(key)) continue
+      if (key === 'role' && !ALLOWED_ROLES.has(value)) {
+        return NextResponse.json({ error: `Invalid role: ${value}` }, { status: 400 })
+      }
+      if (key === 'status' && !ALLOWED_STATUSES.has(value)) {
+        return NextResponse.json({ error: `Invalid status: ${value}` }, { status: 400 })
+      }
+      if (key === 'is_admin' && typeof value !== 'boolean') {
+        return NextResponse.json({ error: 'is_admin must be boolean' }, { status: 400 })
+      }
+      safeUpdates[key] = value
+    }
+
+    if (Object.keys(safeUpdates).length === 0) {
+      return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 })
+    }
+
+    const { error } = await supabase.from('profiles').update(safeUpdates).eq('id', userId)
+    if (error) return NextResponse.json({ error: 'Server error' }, { status: 500 })
     return NextResponse.json({ success: true })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }
 
@@ -57,9 +102,9 @@ export async function DELETE(request) {
 
     const { userId } = await request.json()
     const { error } = await supabase.auth.admin.deleteUser(userId)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: 'Server error' }, { status: 500 })
     return NextResponse.json({ success: true })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

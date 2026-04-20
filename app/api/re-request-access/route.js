@@ -25,10 +25,10 @@ export async function POST(request) {
     if (fullName) updates.full_name = fullName
 
     const { error: updateError } = await supabase.from('profiles').update(updates).eq('id', user.id)
-    if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 })
+    if (updateError) return NextResponse.json({ error: 'Server error' }, { status: 500 })
 
     return NextResponse.json({ success: true })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

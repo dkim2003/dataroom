@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { isSafeRelativePath, isSafeSegment } from '@/lib/pathSafety'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -46,10 +47,21 @@ export async function GET(request) {
       .select('*')
       .order('trashed_at', { ascending: false })
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ items: data })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: 'Server error' }, { status: 500 })
+
+    // Non-admin employees must not see other users' private items in trash —
+    // it would leak the existence of those files.
+    const visible = isAdmin
+      ? data
+      : data.filter(item => {
+          const p = item.original_path || ''
+          if (!p.startsWith('private/')) return true
+          return p.split('/')[1] === user.id
+        })
+
+    return NextResponse.json({ items: visible })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }
 
@@ -62,9 +74,33 @@ export async function POST(request) {
     const { data: profile } = await supabase.from('profiles').select('role, is_admin').eq('id', user.id).single()
     const isAdmin = user.email === ADMIN_EMAIL || profile?.is_admin === true
     const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
+    const hasRestrictedAccess = isAdmin || profile?.role === 'post_nda_investor' || profile?.role === 'post_nda_employee'
     if (!isAdmin && !isEmployee) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
     const { path, fileName } = await request.json()
+    if (typeof path !== 'string' || !isSafeRelativePath(path)) {
+      return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
+    }
+    if (typeof fileName !== 'string' || !isSafeSegment(fileName)) {
+      return NextResponse.json({ error: 'Invalid fileName' }, { status: 400 })
+    }
+
+    // A private file can only be trashed by its owner or an admin.
+    if (path.startsWith('private/')) {
+      const pathUserId = path.split('/')[1]
+      if (pathUserId !== user.id && !isAdmin)
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    // Pre-NDA employees cannot trash restricted files
+    if (path.startsWith('restricted/') && !hasRestrictedAccess) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    // Don't let arbitrary trash/ or non-storage paths get re-trashed.
+    if (path.startsWith('trash/')) {
+      return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
+    }
 
     // Insert trash record to get an ID
     const { data: trashRecord, error: insertError } = await supabase
@@ -73,7 +109,7 @@ export async function POST(request) {
       .select()
       .single()
 
-    if (insertError) return NextResponse.json({ error: insertError.message }, { status: 500 })
+    if (insertError) return NextResponse.json({ error: 'Server error' }, { status: 500 })
 
     const trashPath = `trash/${trashRecord.id}/${fileName}`
 
@@ -81,7 +117,7 @@ export async function POST(request) {
     const { data: fileData, error: downloadError } = await supabase.storage.from('documents').download(path)
     if (downloadError) {
       await supabase.from('trash').delete().eq('id', trashRecord.id)
-      return NextResponse.json({ error: downloadError.message }, { status: 500 })
+      return NextResponse.json({ error: 'Server error' }, { status: 500 })
     }
 
     // Upload to trash location
@@ -93,14 +129,14 @@ export async function POST(request) {
 
     if (uploadError) {
       await supabase.from('trash').delete().eq('id', trashRecord.id)
-      return NextResponse.json({ error: uploadError.message }, { status: 500 })
+      return NextResponse.json({ error: 'Server error' }, { status: 500 })
     }
 
     // Delete from original location
     await supabase.storage.from('documents').remove([path])
 
     return NextResponse.json({ success: true })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

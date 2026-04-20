@@ -34,7 +34,7 @@ export async function GET(request) {
 
     return NextResponse.json({ recents })
 
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

@@ -6,6 +6,11 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
+// POST /api/verify-email
+// Sets profiles.email_verified = true ONLY if Supabase auth has already
+// confirmed the email (i.e. the user actually clicked the magic link).
+// Without this check, any authenticated user could self-confirm by calling
+// this endpoint directly.
 export async function POST(request) {
   try {
     const authHeader = request.headers.get('authorization')
@@ -14,9 +19,18 @@ export async function POST(request) {
     const { data: { user }, error: authError } = await supabase.auth.getUser(token)
     if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+    // Supabase sets email_confirmed_at when a magic link / confirmation link is clicked.
+    // If it's not set, the email hasn't actually been verified yet.
+    if (!user.email_confirmed_at) {
+      return NextResponse.json(
+        { error: 'Email not confirmed by Supabase yet' },
+        { status: 400 }
+      )
+    }
+
     await supabase.from('profiles').update({ email_verified: true }).eq('id', user.id)
     return NextResponse.json({ success: true })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

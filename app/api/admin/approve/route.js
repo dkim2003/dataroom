@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import { Resend } from 'resend'
+import { escapeHtml } from '@/lib/pathSafety'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -22,14 +23,26 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    const { userId, email, fullName } = await request.json()
+    const { userId } = await request.json()
+    if (!userId) return NextResponse.json({ error: 'userId required' }, { status: 400 })
+
+    // Look up the target user's email and name from the auth system and
+    // profile table — never trust body-supplied values. A compromised or
+    // crafted request could supply a different email (sending the magic link
+    // to the attacker) or inject HTML via fullName.
+    const { data: { user: targetUser }, error: userErr } = await supabase.auth.admin.getUserById(userId)
+    if (userErr || !targetUser) return NextResponse.json({ error: 'User not found' }, { status: 404 })
+
+    const { data: targetProfile } = await supabase.from('profiles').select('full_name').eq('id', userId).single()
+    const email = targetUser.email
+    const fullName = targetProfile?.full_name || ''
 
     // Update profile status to approved
     const { error: updateError } = await supabase
       .from('profiles')
       .update({ status: 'approved' })
       .eq('id', userId)
-    if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 })
+    if (updateError) return NextResponse.json({ error: 'Server error' }, { status: 500 })
 
     // Generate a magic link — this confirms their email AND logs them in when clicked
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
@@ -40,10 +53,16 @@ export async function POST(request) {
     })
     if (linkError) {
       console.error('Magic link generation failed:', linkError)
-      return NextResponse.json({ error: linkError.message }, { status: 500 })
+      return NextResponse.json({ error: 'Failed to generate magic link' }, { status: 500 })
     }
 
     const actionLink = linkData.properties.action_link
+
+    // Escape user-controlled strings before interpolating into the HTML
+    // template. fullName is written by the user at signup and could contain
+    // <script> tags or event handlers.
+    const safeName = escapeHtml(fullName)
+    const greeting = safeName ? ` ${safeName}` : ''
 
     // Send approval email via Resend
     const { error: emailError } = await resend.emails.send({
@@ -71,7 +90,7 @@ export async function POST(request) {
                   <tr>
                     <td style="padding-bottom:32px;">
                       <p style="margin:0;font-size:15px;color:#444444;line-height:1.7;">
-                        Hi${fullName ? ` ${fullName}` : ''},<br><br>
+                        Hi${greeting},<br><br>
                         Your request to access the Space Launch Technologies Virtual Data Room has been approved. Click the button below to confirm your email and get started.
                       </p>
                     </td>
@@ -101,13 +120,12 @@ export async function POST(request) {
     })
 
     if (emailError) {
-      // Approval is saved — just log the email failure, don't roll back
       console.error('Approval email failed to send:', emailError)
-      return NextResponse.json({ success: true, emailSent: false, emailError: emailError.message })
+      return NextResponse.json({ success: true, emailSent: false })
     }
 
     return NextResponse.json({ success: true, emailSent: true })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

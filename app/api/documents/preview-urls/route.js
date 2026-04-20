@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { isSafeRelativePath } from '@/lib/pathSafety'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -19,25 +20,54 @@ export async function POST(request) {
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role')
+      .select('role, is_admin')
       .eq('id', user.id)
       .single()
 
-    const isAdmin = user.email === ADMIN_EMAIL
+    const isAdmin = user.email === ADMIN_EMAIL || profile?.is_admin === true
+    const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
     const hasRestrictedAccess = isAdmin ||
       profile?.role === 'post_nda_investor' ||
       profile?.role === 'post_nda_employee'
+    const hasInternalAccess = isAdmin || isEmployee
 
     const { docs } = await request.json()
     if (!Array.isArray(docs)) return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+    if (docs.length > 50) return NextResponse.json({ error: 'Too many paths (max 50)' }, { status: 400 })
 
     const urls = {}
     await Promise.all(docs.map(async ({ path }) => {
-      const isRestricted = path.startsWith('restricted/')
-      if (isRestricted && !hasRestrictedAccess) {
+      if (typeof path !== 'string' || !path || !isSafeRelativePath(path)) {
+        return
+      }
+
+      // Private — owner or admin only
+      if (path.startsWith('private/')) {
+        const pathUserId = path.split('/')[1]
+        if (pathUserId !== user.id && !isAdmin) {
+          urls[path] = null
+          return
+        }
+      }
+
+      // Internal — employees + admin only
+      if (path.startsWith('internal/') && !hasInternalAccess) {
         urls[path] = null
         return
       }
+
+      // Restricted — post-NDA + admin only
+      if (path.startsWith('restricted/') && !hasRestrictedAccess) {
+        urls[path] = null
+        return
+      }
+
+      // Never hand out preview URLs for trash paths
+      if (path.startsWith('trash/')) {
+        urls[path] = null
+        return
+      }
+
       const { data } = await supabase.storage
         .from('documents')
         .createSignedUrl(path, 300) // 5 min expiry for previews
@@ -45,7 +75,7 @@ export async function POST(request) {
     }))
 
     return NextResponse.json({ urls })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

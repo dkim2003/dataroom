@@ -1,7 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
-
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -12,6 +11,7 @@ const anthropic = new Anthropic({
 })
 
 const ADMIN_EMAIL = 'contact@kimduhyun.com'
+const MAX_LIST_DEPTH = 8
 
 // Keywords that suggest the user wants Sol to read actual documents
 const DOCUMENT_KEYWORDS = [
@@ -29,7 +29,8 @@ function isDocumentRelated(message) {
 
 // Recursively list all files the user can access
 async function listAccessibleFiles(hasRestrictedAccess, isAdmin) {
-  async function listFolder(prefix) {
+  async function listFolder(prefix, depth = 0) {
+    if (depth > MAX_LIST_DEPTH) return []
     const { data, error } = await supabase.storage
       .from('documents')
       .list(prefix, { limit: 1000 })
@@ -39,7 +40,7 @@ async function listAccessibleFiles(hasRestrictedAccess, isAdmin) {
     const files = []
     for (const item of data) {
       if (item.id === null) {
-        const subFiles = await listFolder(`${prefix}/${item.name}`)
+        const subFiles = await listFolder(`${prefix}/${item.name}`, depth + 1)
         files.push(...subFiles)
       } else if (item.name !== '.emptyFolderPlaceholder') {
         files.push({ name: item.name, path: `${prefix}/${item.name}` })
@@ -86,19 +87,35 @@ export async function POST(request) {
     // Step 2 — get the user's role
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role')
+      .select('role, is_admin, full_name, status')
       .eq('id', user.id)
       .single()
 
-      const isAdmin = user.email === ADMIN_EMAIL
+      const isAdmin = user.email === ADMIN_EMAIL || profile?.is_admin === true
       const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
       const hasRestrictedAccess = isAdmin || profile?.role === 'post_nda_investor' || profile?.role === 'post_nda_employee'
 
+    // Block pending/rejected users — they can't reach the dashboard normally,
+    // but a saved token or direct API call could still hit this endpoint.
+    if (profile?.status === 'pending' || profile?.status === 'rejected') {
+      return NextResponse.json({ error: 'Account not approved' }, { status: 403 })
+    }
+
     // Step 3 — get the user's message
-    const { message, history = [] } = await request.json()
-    if (!message) {
+    const { message, history: rawHistory = [] } = await request.json()
+    if (!message || typeof message !== 'string') {
       return NextResponse.json({ error: 'No message provided' }, { status: 400 })
     }
+
+    // Validate history structure to prevent prompt injection via crafted messages.
+    // Only allow role:'user' and role:'assistant' with string content.
+    const history = Array.isArray(rawHistory)
+      ? rawHistory.filter(msg =>
+          msg && typeof msg === 'object' &&
+          (msg.role === 'user' || msg.role === 'assistant') &&
+          typeof msg.content === 'string'
+        )
+      : []
 
     // Step 4 — decide whether to fetch documents
     const needsDocs = isDocumentRelated(message)
@@ -112,7 +129,7 @@ export async function POST(request) {
         // No files uploaded yet — tell Sol so it can inform the user
         messageContent.push({
           type: 'text',
-          text: `The user asked: "${message}"\n\nNote: There are currently no documents uploaded in the data room. Let the user know politely.`
+          text: `Note: There are currently no documents uploaded in the data room. Let the user know politely. The user's question follows in the next message.`
         })
       } else {
         // Download each file and add to the message as a document block
@@ -154,14 +171,14 @@ if (documentBlocks.length === 0) {
     // Files exist but none are readable PDFs
     messageContent.push({
         type: 'text',
-        text: `The user asked: "${message}"\n\nNote: There are files in the data room but none could be read. This may be because they are not valid PDF files. Let the user know politely that you can currently only read PDF files, and that the files in the data room may not be in a supported format yet.`
+        text: `Note: There are files in the data room but none could be read. This may be because they are not valid PDF files. Let the user know politely that you can currently only read PDF files, and that the files in the data room may not be in a supported format yet. The user's question follows in the next message.`
     })
 } else {
-    // Add all document blocks first, then the user's question
+    // Add all document blocks first, then instruction context
     messageContent.push(...documentBlocks)
     messageContent.push({
         type: 'text',
-        text: `Based on the documents above, please answer this question: "${message}"\n\nAvailable documents: ${files.map(f => f.name).join(', ')}`
+        text: `Use the documents above to answer the user's question. Available documents: ${files.map(f => f.name).join(', ')}. The user's question follows in the next message.`
     })
 }
 }
@@ -221,8 +238,16 @@ if (documentBlocks.length === 0) {
                 role: msg.role,
                 content: msg.content
             })),
-            // Add the current message last
-            { role: 'user', content: messageContent }
+            // Add context (documents + instructions) as one user message,
+            // then the user's actual question as a separate user message
+            // so the raw question is never embedded inside instruction text.
+            ...(needsDocs
+              ? [
+                  { role: 'user', content: messageContent },
+                  { role: 'user', content: message }
+                ]
+              : [{ role: 'user', content: messageContent }]
+            )
         ]
     })
 
@@ -241,13 +266,13 @@ if (documentBlocks.length === 0) {
         user_id: user.id,
         user_email: user.email,
         action: needsDocs ? 'sol_document_query' : 'sol_query',
-        document_name: message.substring(0, 100)
+        document_name: [...message].slice(0, 100).join('')
       })
 
     return NextResponse.json({ reply })
 
   } catch (err) {
     console.error('Sol API error:', err)
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

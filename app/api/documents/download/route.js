@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { isSafeRelativePath } from '@/lib/pathSafety'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -18,17 +19,31 @@ export async function POST(request) {
 
     const { data: profile } = await supabase.from('profiles').select('role, is_admin').eq('id', user.id).single()
     const isAdmin = user.email === ADMIN_EMAIL || profile?.is_admin === true
+    const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
     const hasRestrictedAccess = isAdmin ||
       profile?.role === 'post_nda_investor' ||
       profile?.role === 'post_nda_employee'
 
     const { path, fileName } = await request.json()
+    if (typeof path !== 'string' || !isSafeRelativePath(path)) {
+      return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
+    }
 
     // Private file — owner or admin only
     if (path.startsWith('private/')) {
       const pathUserId = path.split('/')[1]
       if (pathUserId !== user.id && !isAdmin)
         return NextResponse.json({ error: 'Access denied' }, { status: 403 })
+    }
+
+    // Internal file — employees and admin only
+    if (path.startsWith('internal/') && !isEmployee && !isAdmin) {
+      return NextResponse.json({ error: 'Access denied' }, { status: 403 })
+    }
+
+    // Trash — employees and admin only (used by restore flows and direct links)
+    if (path.startsWith('trash/') && !isEmployee && !isAdmin) {
+      return NextResponse.json({ error: 'Access denied' }, { status: 403 })
     }
 
     const isRestricted = path.startsWith('restricted/')
@@ -40,9 +55,9 @@ export async function POST(request) {
       .from('documents')
       .createSignedUrl(path, 60, { download: fileName })
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: 'Server error' }, { status: 500 })
     return NextResponse.json({ signedUrl: data.signedUrl })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

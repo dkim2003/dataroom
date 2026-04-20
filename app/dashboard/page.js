@@ -28,6 +28,27 @@ const EMPLOYEE_TUTORIAL_STEPS = [
   { target: 'diligence-tab', title: 'Due Diligence', description: 'Track the investor checklist here. Items are checked automatically as documents are uploaded and sorted.' },
 ];
 
+// Open a user-supplied URL safely. Rejects javascript:, data:, vbscript:, file:
+// schemes (which can execute or phish), and always uses noopener,noreferrer
+// so the opened page cannot pivot back to this tab via window.opener.
+function openSafeLink(rawUrl) {
+  if (typeof rawUrl !== 'string' || !rawUrl.trim()) return;
+  let url = rawUrl.trim();
+  try {
+    // If no scheme, default to https://
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = 'https://' + url;
+    const parsed = new URL(url);
+    const allowed = ['http:', 'https:', 'mailto:'];
+    if (!allowed.includes(parsed.protocol.toLowerCase())) {
+      alert('This link uses an unsupported protocol and was blocked.');
+      return;
+    }
+    window.open(parsed.href, '_blank', 'noopener,noreferrer');
+  } catch {
+    alert('This link is malformed and was blocked.');
+  }
+}
+
 function useExoFont() {
   useEffect(() => {
     const link = document.createElement('link');
@@ -319,7 +340,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                   loadPrivateItems(),
                                   loadPrivateFiles(null),
                                   loadPrivateFolderTree(null),
-                                  fetch('/api/folder-order').then(r => r.json()).then(d => { if (d.order?.length) setFolderOrder(d.order); }),
+                                  fetch('/api/folder-order', { headers: { authorization: `Bearer ${session.access_token}` } }).then(r => r.json()).then(d => { if (d.order?.length) setFolderOrder(d.order); }),
                                   fetch('/api/folder-names', { headers: { authorization: `Bearer ${session.access_token}` } }).then(r => r.json()).then(d => { if (d.names) setFolderNames(d.names); }),
                                   adminCheck ? fetch('/api/admin/profiles', { headers: { authorization: `Bearer ${session.access_token}` } }).then(r => r.json()).then(d => { if (d.profiles) setAllProfiles(d.profiles); }) : Promise.resolve()
                                 ]);
@@ -375,7 +396,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                   return;
                                 }
                                 try {
-                                  pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                                  pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
                                   const pdf = await pdfjs.getDocument({ url, withCredentials: false }).promise;
                                   const page = await pdf.getPage(1);
                                   const viewport = page.getViewport({ scale: 2 });
@@ -448,7 +469,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                       if (retries > 0) { await new Promise(r => setTimeout(r, 600)); return tryRender(retries - 1); }
                                       setPitchDeckError('pdfjs_unavailable'); setPitchDeckLoading(false); return;
                                     }
-                                    pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                                    pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
                                     const pdf = await pdfjs.getDocument({ url: urlData.signedUrl, withCredentials: false }).promise;
                                     for (let i = 1; i <= pdf.numPages; i++) {
                                       const page = await pdf.getPage(i);
@@ -1015,7 +1036,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 await fetch('/api/trash', {
                                   method: 'POST',
                                   headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ path: doc.path, name: doc.name })
+                                  body: JSON.stringify({ path: doc.path, fileName: doc.name })
                                 });
                               }
 
@@ -1065,7 +1086,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
 
                               const result = await response.json();
                               if (result.signedUrl) {
-                                window.open(result.signedUrl, '_blank');
+                                window.open(result.signedUrl, '_blank', 'noopener,noreferrer');
                                 setUserRecents(prev => ({ ...prev, [fileName]: new Date().toISOString() }));
                               } else if (result.requiresNda) {
                                 window.location.href = '/nda';
@@ -1218,12 +1239,14 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             }
 
                             async function handleDiligenceToggle(item) {
+                              if (!isEmployee && !isAdmin) return;
                               const updated = { checked: !item.checked };
                               await supabase.from('due_diligence').update(updated).eq('id', item.id);
                               setDiligenceItems(prev => prev.map(d => d.id === item.id ? { ...d, ...updated } : d));
                             }
 
                             async function handleDiligenceEditConfirm(item) {
+                              if (!isEmployee && !isAdmin) return;
                               const trimmed = diligenceEditValue.trim();
                               setEditingDiligenceId(null);
                               if (!trimmed || trimmed === item.item) return;
@@ -1232,6 +1255,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             }
 
                             async function handleDiligenceAdd() {
+                              if (!isEmployee && !isAdmin) return;
                               const trimmed = newDiligenceText.trim();
                               if (!trimmed) return;
                               const maxPos = diligenceItems.length > 0 ? Math.max(...diligenceItems.map(d => d.position)) : -1;
@@ -1241,6 +1265,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             }
 
                             async function handleDiligenceDelete(item) {
+                              if (!isEmployee && !isAdmin) return;
                               await supabase.from('due_diligence').delete().eq('id', item.id);
                               setDiligenceItems(prev => prev.filter(d => d.id !== item.id));
                             }
@@ -1422,6 +1447,10 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               taskStart('Renaming folder...');
                               const oldFullPath = `${topFolder}/${oldSub}`;
                               const newFullPath = `${topFolder}/${trimmed}`;
+                              // Save snapshots for rollback on failure
+                              const prevDocuments = documents;
+                              const prevFolderPaths = folderPaths;
+                              const prevActiveFolder = activeFolder;
                               // Optimistic update
                               setDocuments(prev => prev.map(d => {
                                 const p = d.path.split('/');
@@ -1444,23 +1473,34 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 setActiveFolder(newFullPath + (activeFolder || '').slice(oldFullPath.length));
                               }
                               // API calls (use original documents/folderPaths captured before state updates)
-                              const folderDocs = documents.filter(doc => {
+                              let anyFailed = false;
+                              const folderDocs = prevDocuments.filter(doc => {
                                 const p = doc.path.split('/');
                                 const docFolder = p.slice(1, -1).join('/');
                                 return docFolder === oldFullPath || docFolder.startsWith(oldFullPath + '/');
                               });
-                              const folderFullPath = folderPaths.find(fp => fp.split('/').slice(1).join('/') === oldFullPath);
+                              const folderFullPath = prevFolderPaths.find(fp => fp.split('/').slice(1).join('/') === oldFullPath);
                               const { data: { session } } = await supabase.auth.getSession();
                               for (const doc of folderDocs) {
                                 const p = doc.path.split('/');
                                 const docFolder = p.slice(1, -1).join('/');
                                 const newDocFolder = newFullPath + docFolder.slice(oldFullPath.length);
                                 const newPath = p[0] + '/' + newDocFolder + '/' + p[p.length - 1];
-                                await fetch('/api/documents/move', {
+                                const res = await fetch('/api/documents/move', {
                                   method: 'POST',
                                   headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
                                   body: JSON.stringify({ oldPath: doc.path, newPath })
                                 });
+                                if (!res.ok) anyFailed = true;
+                              }
+                              if (anyFailed) {
+                                // Rollback optimistic state and reload from server
+                                setDocuments(prevDocuments);
+                                setFolderPaths(prevFolderPaths);
+                                setActiveFolder(prevActiveFolder);
+                                await loadDocuments();
+                                taskDone('Rename failed — some files could not be moved', 'error');
+                                return;
                               }
                               // Move the .keep placeholder
                               if (folderFullPath) {
@@ -2241,7 +2281,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                         <span />
                       </div>
                       {filteredLinks.map(link => (
-                        <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && window.open(link.url, '_blank')}>
+                        <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && openSafeLink(link.url)}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                             {renamingLinkId === link.id ? <input autoFocus value={renameLinkValue} onChange={e => setRenameLinkValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') renameLink(link.id, renameLinkValue); if (e.key === 'Escape') setRenamingLinkId(null); }} onBlur={() => renameLink(link.id, renameLinkValue)} onClick={e => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} /> : <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>}
@@ -2254,7 +2294,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 <button onClick={e => { e.stopPropagation(); setOpenMenuPath(openMenuPath === link.id ? null : link.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 8px', borderRadius: '4px', fontSize: '18px', lineHeight: 1, fontFamily: 'monospace' }}>⋮</button>
                                 {openMenuPath === link.id && (
                                   <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', right: 0, top: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
-                                    <button onClick={() => { setOpenMenuPath(null); window.open(link.url, '_blank'); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                    <button onClick={() => { setOpenMenuPath(null); openSafeLink(link.url); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
                                     <div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/>
                                     <button onClick={() => { setOpenMenuPath(null); if (confirm(`Remove link "${link.name}"?`)) deleteLink(link.id); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Remove</button>
                                   </div>
@@ -2369,7 +2409,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                           <span />
                         </div>
                         {filteredLinks.map(link => (
-                          <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && window.open(link.url, '_blank')}>
+                          <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && openSafeLink(link.url)}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                               {renamingLinkId === link.id ? <input autoFocus value={renameLinkValue} onChange={e => setRenameLinkValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') renameLink(link.id, renameLinkValue); if (e.key === 'Escape') setRenamingLinkId(null); }} onBlur={() => renameLink(link.id, renameLinkValue)} onClick={e => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} /> : <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>}
@@ -2382,7 +2422,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                   <button onClick={e => { e.stopPropagation(); setOpenMenuPath(openMenuPath === link.id ? null : link.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 8px', borderRadius: '4px', fontSize: '18px', lineHeight: 1, fontFamily: 'monospace' }}>⋮</button>
                                   {openMenuPath === link.id && (
                                     <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', right: 0, top: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
-                                      <button onClick={() => { setOpenMenuPath(null); window.open(link.url, '_blank'); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                      <button onClick={() => { setOpenMenuPath(null); openSafeLink(link.url); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
                                       <button onClick={() => { setOpenMenuPath(null); setRenamingLinkId(link.id); setRenameLinkValue(link.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>
                                       <div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/>
                                       <button onClick={() => { setOpenMenuPath(null); if (confirm(`Remove link "${link.name}"?`)) deleteLink(link.id); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Remove</button>
@@ -2532,7 +2572,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                       <span />
                     </div>
                     {filteredLinks.map(link => (
-                      <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && window.open(link.url, '_blank')}>
+                      <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && openSafeLink(link.url)}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                           {renamingLinkId === link.id ? <input autoFocus value={renameLinkValue} onChange={e => setRenameLinkValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') renameLink(link.id, renameLinkValue); if (e.key === 'Escape') setRenamingLinkId(null); }} onBlur={() => renameLink(link.id, renameLinkValue)} onClick={e => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} /> : <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>}
@@ -2546,7 +2586,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               <button onClick={e => { e.stopPropagation(); setOpenMenuPath(openMenuPath === link.id ? null : link.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 8px', borderRadius: '4px', fontSize: '18px', lineHeight: 1, fontFamily: 'monospace' }}>⋮</button>
                               {openMenuPath === link.id && (
                                 <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', right: 0, top: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
-                                  <button onClick={() => { setOpenMenuPath(null); window.open(link.url, '_blank'); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                  <button onClick={() => { setOpenMenuPath(null); openSafeLink(link.url); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
                                   <button onClick={() => { setOpenMenuPath(null); setRenamingLinkId(link.id); setRenameLinkValue(link.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>
                                   <div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/>
                                   <button onClick={() => { setOpenMenuPath(null); if (confirm(`Remove link "${link.name}"?`)) deleteLink(link.id); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Remove</button>
@@ -2817,7 +2857,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                           {filteredLinks.map(link => (
                             <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}
-                              onClick={() => window.open(link.url, '_blank')}>
+                              onClick={() => openSafeLink(link.url)}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                                 <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>
@@ -2830,7 +2870,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                     <button onClick={e => { e.stopPropagation(); setOpenMenuPath(openMenuPath === link.id ? null : link.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 8px', borderRadius: '4px', fontSize: '18px', lineHeight: 1, fontFamily: 'monospace' }}>⋮</button>
                                     {openMenuPath === link.id && (
                                       <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', right: 0, top: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
-                                        <button onClick={() => { setOpenMenuPath(null); window.open(link.url, '_blank'); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                        <button onClick={() => { setOpenMenuPath(null); openSafeLink(link.url); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
                                         <div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/>
                                         <button onClick={() => { setOpenMenuPath(null); if (confirm(`Remove link "${link.name}"?`)) deleteLink(link.id); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Remove</button>
                                       </div>
@@ -2846,7 +2886,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     {docView === 'grid' && (
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '12px' }}>
                         {filteredLinks.map(link => (
-                          <div key={link.id} onClick={() => window.open(link.url, '_blank')}
+                          <div key={link.id} onClick={() => openSafeLink(link.url)}
                             style={{ display: 'flex', flexDirection: 'column', background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '10px', overflow: 'hidden', cursor: 'pointer' }}>
                             <div style={{ height: '160px', background: '#1a1a1a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
@@ -2859,7 +2899,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                   <button onClick={e => { e.stopPropagation(); setOpenMenuPath(openMenuPath === link.id ? null : link.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '2px 4px', fontSize: '16px', lineHeight: 1, fontFamily: 'monospace' }}>⋮</button>
                                   {openMenuPath === link.id && (
                                     <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', right: 0, bottom: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', marginBottom: '4px' }}>
-                                      <button onClick={() => { setOpenMenuPath(null); window.open(link.url, '_blank'); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                      <button onClick={() => { setOpenMenuPath(null); openSafeLink(link.url); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
                                       <button onClick={() => { setOpenMenuPath(null); setRenamingLinkId(link.id); setRenameLinkValue(link.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>
                                       <div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/>
                                       <button onClick={() => { setOpenMenuPath(null); if (confirm(`Remove link "${link.name}"?`)) deleteLink(link.id); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Remove</button>
@@ -3107,7 +3147,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                       {privateLinks.map(link => {
                         const isRenaming = renamingLinkId === link.id;
                         return (
-                          <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: isRenaming ? 'default' : 'pointer' }} onClick={() => !isRenaming && window.open(link.url, '_blank')}>
+                          <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: isRenaming ? 'default' : 'pointer' }} onClick={() => !isRenaming && openSafeLink(link.url)}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                               {isRenaming ? (
@@ -3123,7 +3163,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 <button onClick={e => { e.stopPropagation(); setOpenMenuPath(openMenuPath === link.id ? null : link.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', padding: '4px 8px', borderRadius: '4px', fontSize: '18px', lineHeight: 1, fontFamily: 'monospace' }}>⋮</button>
                                 {openMenuPath === link.id && (
                                   <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', right: 0, top: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
-                                    <button onClick={() => { setOpenMenuPath(null); window.open(link.url, '_blank'); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                    <button onClick={() => { setOpenMenuPath(null); openSafeLink(link.url); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
                                     {link.created_by === user.id && <button onClick={() => { setOpenMenuPath(null); setRenamingLinkId(link.id); setRenameLinkValue(link.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>}
                                     {(link.created_by === user.id || isAdmin) && <><div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/><button onClick={() => { setOpenMenuPath(null); if (confirm(`Remove link "${link.name}"?`)) deleteLink(link.id); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Remove</button></>}
                                   </div>
@@ -3420,8 +3460,14 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
           <div style={{ flex: 1, overflowY: 'auto', padding: '18px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
             {solMessages.map((msg, i) => (
               <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
-                <div style={{ maxWidth: '88%', padding: '10px 14px', borderRadius: '8px', fontSize: '15px', lineHeight: '1.6', background: msg.role === 'user' ? '#3b82f6' : 'rgba(255,255,255,0.06)', color: msg.role === 'user' ? '#fff' : '#ddd', fontFamily: 'Exo 2, sans-serif' }}>
-                  {msg.content}
+                <div style={{ maxWidth: '88%', padding: '10px 14px', borderRadius: '8px', fontSize: '15px', lineHeight: '1.6', background: msg.role === 'user' ? '#3b82f6' : 'rgba(255,255,255,0.06)', color: msg.role === 'user' ? '#fff' : '#ddd', fontFamily: 'Exo 2, sans-serif', whiteSpace: 'pre-wrap' }}>
+                  {msg.role === 'assistant'
+                    ? cleanMarkdown(msg.content).split('\n').map((line, j) => (
+                        <div key={j} style={{ paddingLeft: line.startsWith('•') ? '16px' : '0', textIndent: line.startsWith('•') ? '-16px' : '0', marginBottom: line.startsWith('•') ? '4px' : '0' }}>
+                          {line}
+                        </div>
+                      ))
+                    : msg.content}
                 </div>
               </div>
             ))}

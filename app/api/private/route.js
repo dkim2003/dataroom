@@ -27,10 +27,10 @@ export async function GET(request) {
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: 'Server error' }, { status: 500 })
     return NextResponse.json({ items: data })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }
 
@@ -50,10 +50,10 @@ export async function POST(request) {
       .select()
       .single()
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: 'Server error' }, { status: 500 })
     return NextResponse.json({ item: data })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }
 
@@ -71,10 +71,10 @@ export async function PATCH(request) {
       .eq('user_id', user.id)
       .select()
       .single()
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: 'Server error' }, { status: 500 })
     return NextResponse.json({ item: data })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }
 
@@ -91,9 +91,9 @@ export async function DELETE(request) {
       .eq('id', id)
       .eq('user_id', user.id) // extra safety: only delete own items
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: 'Server error' }, { status: 500 })
     return NextResponse.json({ success: true })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

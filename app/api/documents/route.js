@@ -7,9 +7,11 @@ const supabase = createClient(
 )
 
 const ADMIN_EMAIL = 'contact@kimduhyun.com'
+const MAX_LIST_DEPTH = 8
 
 // Returns { files, folderPaths } — folderPaths includes ALL subdirectories, even empty ones
-async function listAll(prefix) {
+async function listAll(prefix, depth = 0) {
+  if (depth > MAX_LIST_DEPTH) return { files: [], folderPaths: [] }
   const { data, error } = await supabase.storage
     .from('documents')
     .list(prefix, { limit: 1000 })
@@ -23,7 +25,7 @@ async function listAll(prefix) {
     if (item.id === null) {
       const subPath = `${prefix}/${item.name}`
       folderPaths.push(subPath)
-      const sub = await listAll(subPath)
+      const sub = await listAll(subPath, depth + 1)
       files.push(...sub.files)
       folderPaths.push(...sub.folderPaths)
     } else if (item.name !== '.emptyFolderPlaceholder' && item.name !== '.keep') {
@@ -78,7 +80,7 @@ export async function GET(request) {
 
     return NextResponse.json({ documents, folderPaths: allFolderPaths })
 
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

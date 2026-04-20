@@ -1,12 +1,15 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { checkRateLimit } from '@/lib/rateLimit'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+
+const ADMIN_EMAIL = 'contact@kimduhyun.com'
 
 const FOLDERS = [
   '00_START_HERE', '01_Pitch_and_Overview', '02_Market_Opportunity',
@@ -21,6 +24,16 @@ export async function POST(request) {
     const token = authHeader.replace('Bearer ', '')
     const { data: { user }, error } = await supabase.auth.getUser(token)
     if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    // Only employees and admins may trigger the AI sort.
+    const { data: profile } = await supabase.from('profiles').select('role, is_admin').eq('id', user.id).single()
+    const isAdmin = user.email === ADMIN_EMAIL || profile?.is_admin === true
+    const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
+    if (!isAdmin && !isEmployee) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+    if (!checkRateLimit(`sort-link:${user.id}`, 20, 5 * 60 * 1000)) {
+      return NextResponse.json({ error: 'Rate limit exceeded' }, { status: 429 })
+    }
 
     const { name, url } = await request.json()
     if (!name || !url) return NextResponse.json({ error: 'name and url required' }, { status: 400 })
@@ -49,7 +62,7 @@ Reply with JSON only, no markdown: {"folder": "exact_folder_name", "isRestricted
     const folder = FOLDERS.includes(result.folder) ? result.folder : '10_Appendix'
 
     return NextResponse.json({ folder, isRestricted: !!result.isRestricted })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

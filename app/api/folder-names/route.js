@@ -55,10 +55,10 @@ export async function POST(request) {
       const { error } = await supabase.from('settings').insert({ key: 'folder_names', value: names })
       saveError = error
     }
-    if (saveError) return NextResponse.json({ error: saveError.message }, { status: 500 })
+    if (saveError) return NextResponse.json({ error: 'Server error' }, { status: 500 })
     return NextResponse.json({ success: true, names })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }
 
@@ -74,7 +74,7 @@ export async function DELETE(request) {
     delete names[original]
     await supabase.from('settings').upsert({ key: 'folder_names', value: names })
     return NextResponse.json({ success: true })
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }
