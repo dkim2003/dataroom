@@ -8,7 +8,11 @@ const supabase = createClient(
 
 const ADMIN_EMAIL = 'contact@kimduhyun.com'
 
-async function verifyAdmin(request) {
+// GET is permitted for any authenticated user — investors need the same
+// display-name overrides admins/employees see, otherwise sidebar labels and
+// folder headings diverge across account types. Write operations (POST/DELETE)
+// remain admin/employee only.
+async function verifyAuth(request) {
   const authHeader = request.headers.get('authorization')
   if (!authHeader) return null
   const token = authHeader.replace('Bearer ', '')
@@ -17,14 +21,14 @@ async function verifyAdmin(request) {
   const { data: profile } = await supabase.from('profiles').select('role, is_admin').eq('id', user.id).single()
   const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
   const isAdmin = user.email === ADMIN_EMAIL || profile?.is_admin === true
-  if (!isEmployee && !isAdmin) return null
-  return { user, isAdmin }
+  return { user, profile, isEmployee, isAdmin }
 }
 
 // GET /api/folder-names — returns { names: { originalName: displayName } }
+// Accessible to any authenticated user so investor display names match admin's.
 export async function GET(request) {
   try {
-    const auth = await verifyAdmin(request)
+    const auth = await verifyAuth(request)
     if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { data } = await supabase.from('settings').select('value').eq('key', 'folder_names').single()
     return NextResponse.json({ names: data?.value || {} })
@@ -36,8 +40,8 @@ export async function GET(request) {
 // POST /api/folder-names — upsert a display name: { original, display }
 export async function POST(request) {
   try {
-    const auth = await verifyAdmin(request)
-    if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const auth = await verifyAuth(request)
+    if (!auth || (!auth.isEmployee && !auth.isAdmin)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { original, display } = await request.json()
     if (!original) return NextResponse.json({ error: 'original required' }, { status: 400 })
     const { data: existing } = await supabase.from('settings').select('value').eq('key', 'folder_names').single()
@@ -65,8 +69,8 @@ export async function POST(request) {
 // DELETE /api/folder-names — remove a display name override: { original }
 export async function DELETE(request) {
   try {
-    const auth = await verifyAdmin(request)
-    if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const auth = await verifyAuth(request)
+    if (!auth || (!auth.isEmployee && !auth.isAdmin)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { original } = await request.json()
     if (!original) return NextResponse.json({ error: 'original required' }, { status: 400 })
     const { data: existing } = await supabase.from('settings').select('value').eq('key', 'folder_names').single()

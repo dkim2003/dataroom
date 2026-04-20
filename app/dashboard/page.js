@@ -1306,14 +1306,22 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             async function handleMoveDoc(doc, targetFolder) {
                               const parts = doc.path.split('/');
                               const filename = parts[parts.length - 1];
-                              // Determine the correct storage prefix for the target folder
+                              // Determine the storage prefix from the target folder's actual presence
+                              // in folderPaths. Prefer internal > restricted > general so a folder
+                              // that exists in multiple prefixes routes to the most restricted one.
+                              // Refuse the move (rather than silently default to general) if the
+                              // target doesn't exist in any known prefix — that silent fallback was
+                              // responsible for files landing in general/ when the user believed they
+                              // were moving to internal/.
                               const topTarget = targetFolder.split('/')[0];
-                              let targetPrefix = 'general';
-                              if (folderPaths.some(fp => fp.startsWith('internal/') && fp.split('/')[1] === topTarget)) {
-                                targetPrefix = 'internal';
-                              } else if (folderPaths.some(fp => fp.startsWith('restricted/') && fp.split('/')[1] === topTarget)) {
-                                targetPrefix = 'restricted';
-                              }
+                              const hasInternal = folderPaths.some(fp => fp.startsWith('internal/') && fp.split('/')[1] === topTarget);
+                              const hasRestricted = folderPaths.some(fp => fp.startsWith('restricted/') && fp.split('/')[1] === topTarget);
+                              const hasGeneral = folderPaths.some(fp => fp.startsWith('general/') && fp.split('/')[1] === topTarget);
+                              let targetPrefix;
+                              if (hasInternal) targetPrefix = 'internal';
+                              else if (hasRestricted) targetPrefix = 'restricted';
+                              else if (hasGeneral) targetPrefix = 'general';
+                              else { taskDone('Move failed — target folder not found', 'error'); return; }
                               const newPath = `${targetPrefix}/${targetFolder}/${filename}`;
                               if (newPath === doc.path) return;
                               taskStart('Moving file...');
@@ -1337,15 +1345,19 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 return p[1] === topFolder && p[2] === sub;
                               });
                               if (folderDocs.length === 0) return;
-                              taskStart('Moving folder...');
-                              // Determine the correct storage prefix for the target folder
+                              // Determine the storage prefix from the target folder's actual presence
+                              // in folderPaths. See comment in handleMoveDoc — refuse rather than
+                              // silently default to general.
                               const topTarget = targetFolder.split('/')[0];
-                              let targetPrefix = 'general';
-                              if (folderPaths.some(fp => fp.startsWith('internal/') && fp.split('/')[1] === topTarget)) {
-                                targetPrefix = 'internal';
-                              } else if (folderPaths.some(fp => fp.startsWith('restricted/') && fp.split('/')[1] === topTarget)) {
-                                targetPrefix = 'restricted';
-                              }
+                              const hasInternal = folderPaths.some(fp => fp.startsWith('internal/') && fp.split('/')[1] === topTarget);
+                              const hasRestricted = folderPaths.some(fp => fp.startsWith('restricted/') && fp.split('/')[1] === topTarget);
+                              const hasGeneral = folderPaths.some(fp => fp.startsWith('general/') && fp.split('/')[1] === topTarget);
+                              let targetPrefix;
+                              if (hasInternal) targetPrefix = 'internal';
+                              else if (hasRestricted) targetPrefix = 'restricted';
+                              else if (hasGeneral) targetPrefix = 'general';
+                              else { taskDone('Move failed — target folder not found', 'error'); return; }
+                              taskStart('Moving folder...');
                               const { data: { session } } = await supabase.auth.getSession();
                               for (const doc of folderDocs) {
                                 const p = doc.path.split('/');
