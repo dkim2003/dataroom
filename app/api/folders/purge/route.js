@@ -71,6 +71,13 @@ export async function POST(request) {
       await supabase.storage.from('documents').remove(allPaths)
     }
 
+    await supabase.from('audit_log').insert({
+      user_id: user.id,
+      user_email: user.email,
+      action: 'folder_deleted',
+      document_name: folderName
+    })
+
     return NextResponse.json({ success: true, removed: allPaths.length })
   } catch {
     return NextResponse.json({ error: 'Server error' }, { status: 500 })

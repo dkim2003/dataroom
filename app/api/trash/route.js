@@ -77,7 +77,7 @@ export async function POST(request) {
     const hasRestrictedAccess = isAdmin || profile?.role === 'post_nda_investor' || profile?.role === 'post_nda_employee'
     if (!isAdmin && !isEmployee) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-    const { path, fileName } = await request.json()
+    const { path, fileName, skipLog } = await request.json()
     if (typeof path !== 'string' || !isSafeRelativePath(path)) {
       return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
     }
@@ -134,6 +134,15 @@ export async function POST(request) {
 
     // Delete from original location
     await supabase.storage.from('documents').remove([path])
+
+    if (!skipLog) {
+      await supabase.from('audit_log').insert({
+        user_id: user.id,
+        user_email: user.email,
+        action: 'file_deleted',
+        document_name: path
+      })
+    }
 
     return NextResponse.json({ success: true })
   } catch {

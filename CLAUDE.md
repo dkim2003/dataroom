@@ -188,6 +188,12 @@ Dashboard shows a spotlight tutorial on first login (tracked via `profiles.has_s
 ### Upcoming Work
 
 1. **DocuSign fix** — `AUTHORIZATION_INVALID_TOKEN` error from envelope API; investigate JWT auth flow and sandbox configuration
+2. **Lint cleanup** — 11 pre-existing ESLint errors from the `react-hooks/immutability` rule. Build passes; runtime is fine because of JS function hoisting, but the rule is correct that the references aren't stable across renders.
+   - `dashboard/admin/page.js:43` — `loadProfiles()` called from `useEffect` before its declaration
+   - `dashboard/page.js:333, 338-343, 448` — `init()` and the pitch-deck effect call `loadDocuments`, `loadDiligence`, `loadUserRecents`, `loadLinks`, `loadPrivateItems`, `loadPrivateFiles`, `loadPrivateFolderTree`, `loadPitchDeck` declared further down in the component
+   - `nda/page.js:25` — `useEffect` calls `completeNda` declared below; also missing from the deps array (separate warning)
+   - `dashboard/page.js:1144` — `window.location.href = '/nda'` flagged as "This value cannot be modified"; this is a linter false positive on a valid redirect pattern. Either suppress with an `eslint-disable-next-line` or rewrite as `router.push('/nda')` for consistency with the rest of the file.
+   - **Fix approach**: hoist each `async function loadX` into a `useCallback` (or move them above the effects that call them). Cleanest is probably extracting them to module-scope helpers that take `setX` setters as args, but that's a bigger refactor.
 
 ### Recent Fixes (session 2026-04-20/23)
 

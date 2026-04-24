@@ -506,6 +506,24 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               await loadPitchDeck();
                             }
 
+                            async function downloadPitchDeck() {
+                              const { data: { session } } = await supabase.auth.getSession();
+                              const res = await fetch('/api/pitch-deck', { headers: { authorization: `Bearer ${session.access_token}` } });
+                              if (!res.ok) { taskDone('Download failed', 'error'); return; }
+                              const data = await res.json();
+                              if (!data.signedUrl) { taskDone('Download failed', 'error'); return; }
+                              const fileRes = await fetch(data.signedUrl);
+                              const blob = await fileRes.blob();
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url;
+                              a.download = 'pitch_deck.pdf';
+                              document.body.appendChild(a);
+                              a.click();
+                              document.body.removeChild(a);
+                              URL.revokeObjectURL(url);
+                            }
+
                             async function loadDocuments() {
                               const { data: { session } } = await supabase.auth.getSession();
                               const response = await fetch('/api/documents', {
@@ -1047,13 +1065,15 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               taskStart('Moving files to trash...');
                               const { data: { session } } = await supabase.auth.getSession();
 
-                              // Trash all actual documents in this folder
+                              // Trash all actual documents in this folder. skipLog=true so we don't
+                              // flood the audit log with one entry per file — purge emits one
+                              // folder_deleted summary at the end.
                               const folderDocs = documents.filter(d => d.path.split('/')[1] === folderName);
                               for (const doc of folderDocs) {
                                 await fetch('/api/trash', {
                                   method: 'POST',
                                   headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ path: doc.path, fileName: doc.name })
+                                  body: JSON.stringify({ path: doc.path, fileName: doc.name, skipLog: true })
                                 });
                               }
 
@@ -1444,11 +1464,13 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 return docFolder === folderPath || docFolder.startsWith(folderPath + '/');
                               });
                               const { data: { session } } = await supabase.auth.getSession();
+                              // skipLog=true to suppress per-file file_deleted entries — we emit one
+                              // folder_deleted summary below for the whole subfolder operation.
                               for (const doc of folderDocs) {
                                 await fetch('/api/trash', {
                                   method: 'POST',
                                   headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ path: doc.path, fileName: doc.name })
+                                  body: JSON.stringify({ path: doc.path, fileName: doc.name, skipLog: true })
                                 });
                               }
                               // Delete all .keep placeholders for this folder and its subfolders
@@ -1463,6 +1485,12 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                   body: JSON.stringify({ keepPath: `${fp}/.keep` })
                                 });
                               }
+                              const folderFullPath = folderPaths.find(fp => fp.split('/').slice(1).join('/') === folderPath);
+                              await fetch('/api/activity/log', {
+                                method: 'POST',
+                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ action: 'folder_deleted', document_name: folderFullPath || folderPath })
+                              });
                               if (activeFolder === folderPath || activeFolder?.startsWith(folderPath + '/')) {
                                 setActiveFolder(folderPath.split('/').slice(0, -1).join('/') || null);
                               }
@@ -1474,11 +1502,12 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               taskStart('Moving folder to trash...');
                               const folderDocs = documents.filter(doc => doc.path.split('/')[1] === folderName);
                               const { data: { session } } = await supabase.auth.getSession();
+                              // skipLog=true — purge endpoint emits one folder_deleted summary.
                               for (const doc of folderDocs) {
                                 await fetch('/api/trash', {
                                   method: 'POST',
                                   headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ path: doc.path, fileName: doc.name })
+                                  body: JSON.stringify({ path: doc.path, fileName: doc.name, skipLog: true })
                                 });
                               }
                               // Delete all .keep placeholders for this top-level folder and its subfolders
@@ -1549,6 +1578,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               });
                               const folderFullPath = prevFolderPaths.find(fp => fp.split('/').slice(1).join('/') === oldFullPath);
                               const { data: { session } } = await supabase.auth.getSession();
+                              // skipLog=true so each per-file move doesn't emit file_renamed.
+                              // We emit one folder_renamed summary below for the whole rename.
                               for (const doc of folderDocs) {
                                 const p = doc.path.split('/');
                                 const docFolder = p.slice(1, -1).join('/');
@@ -1557,7 +1588,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 const res = await fetch('/api/documents/move', {
                                   method: 'POST',
                                   headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ oldPath: doc.path, newPath })
+                                  body: JSON.stringify({ oldPath: doc.path, newPath, skipLog: true })
                                 });
                                 if (!res.ok) anyFailed = true;
                               }
@@ -1570,7 +1601,9 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 taskDone('Rename failed — some files could not be moved', 'error');
                                 return;
                               }
-                              // Move the .keep placeholder
+                              // Move the .keep placeholder. skipLog=true so the new folder doesn't
+                              // appear in the audit log as folder_created — it's part of a rename,
+                              // not a fresh folder.
                               if (folderFullPath) {
                                 const isRestricted = folderFullPath.startsWith('restricted');
                                 const isInternal = folderFullPath.startsWith('internal');
@@ -1582,7 +1615,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 await fetch('/api/folders', {
                                   method: 'POST',
                                   headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ folderPath: newFullPath, isRestricted, isInternal })
+                                  body: JSON.stringify({ folderPath: newFullPath, isRestricted, isInternal, skipLog: true })
                                 });
                               } else {
                                 // folderFullPath not found in state — try all prefixes to delete old .keep
@@ -1600,9 +1633,15 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 await fetch('/api/folders', {
                                   method: 'POST',
                                   headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ folderPath: newFullPath, isRestricted, isInternal })
+                                  body: JSON.stringify({ folderPath: newFullPath, isRestricted, isInternal, skipLog: true })
                                 });
                               }
+                              // Emit one folder_renamed summary for the whole bulk rename.
+                              await fetch('/api/activity/log', {
+                                method: 'POST',
+                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ action: 'folder_renamed', document_name: `${oldFullPath} → ${newFullPath}` })
+                              });
                               taskDone('Folder renamed');
                             }
 
@@ -3357,6 +3396,14 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                       onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadPitchDeck(f); e.target.value = ''; }}
                     />
                     <button
+                      onClick={downloadPitchDeck}
+                      disabled={pitchDeckError === 'no_file' || pitchDeckLoading}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: (pitchDeckError === 'no_file' || pitchDeckLoading) ? 'not-allowed' : 'pointer', opacity: (pitchDeckError === 'no_file' || pitchDeckLoading) ? 0.4 : 1 }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                      Download
+                    </button>
+                    <button
                       onClick={() => pitchDeckInputRef.current?.click()}
                       style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', background: '#3b82f6', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}
                     >
@@ -3413,7 +3460,19 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
 
           {/* Activity — admin */}
           {activeTab === 'activity' && isAdmin && (() => {
-            const actionLabel = (action) => action === 'document_viewed' ? 'Opened document' : action === 'sol_document_query' ? 'Sol (with docs)' : 'Sol query';
+            const ACTION_LABELS = {
+              document_viewed: 'Opened document',
+              sol_document_query: 'Sol (with docs)',
+              sol_query: 'Sol query',
+              file_uploaded: 'Uploaded file',
+              file_renamed: 'Edited file name',
+              file_deleted: 'Deleted file',
+              folder_created: 'Created folder',
+              folder_renamed: 'Edited folder name',
+              folder_deleted: 'Deleted folder',
+              pitch_deck_uploaded: 'Uploaded pitch deck',
+            };
+            const actionLabel = (action) => ACTION_LABELS[action] || action;
             const fmtTime = (ts) => ts.toLocaleDateString(undefined, { day: '2-digit', month: 'short' }) + ' ' + ts.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
             const toggleRow = (rowKey) => setExpandedActivityRows(prev => { const next = new Set(prev); if (next.has(rowKey)) next.delete(rowKey); else next.add(rowKey); return next; });
 
@@ -3479,10 +3538,23 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
             };
 
             const byType = () => {
-              const order = ['document_viewed', 'sol_document_query', 'sol_query'];
+              const order = [
+                'document_viewed',
+                'file_uploaded',
+                'file_renamed',
+                'file_deleted',
+                'folder_created',
+                'folder_renamed',
+                'folder_deleted',
+                'pitch_deck_uploaded',
+                'sol_document_query',
+                'sol_query',
+              ];
               const map = {};
               activityLogs.forEach(log => { if (!map[log.action]) map[log.action] = []; map[log.action].push(log); });
-              return order.filter(k => map[k]).map(k => [actionLabel(k), map[k]]);
+              const known = order.filter(k => map[k]).map(k => [actionLabel(k), map[k]]);
+              const extras = Object.keys(map).filter(k => !order.includes(k)).map(k => [actionLabel(k), map[k]]);
+              return [...known, ...extras];
             };
 
             return (
@@ -3491,7 +3563,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                   <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em' }}>ACTIVITY</h1>
                   <button onClick={loadActivity} style={{ padding: '7px 14px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#aaa', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Refresh</button>
                 </div>
-                <p style={{ fontSize: '14px', color: '#777', marginBottom: '16px' }}>Audit log — document views and Sol queries</p>
+                <p style={{ fontSize: '14px', color: '#777', marginBottom: '16px' }}>Audit log — document views, uploads, edits, deletes, and Sol queries</p>
                 <div style={{ display: 'flex', gap: '8px', marginBottom: '24px' }}>
                   {[['recency', 'By recency'], ['user', 'By user'], ['type', 'By type']].map(([id, label]) => (
                     <button key={id} onClick={() => setActivityView(id)} style={{ padding: '7px 16px', background: activityView === id ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.04)', border: activityView === id ? '1px solid rgba(59,130,246,0.4)' : '1px solid rgba(255,255,255,0.08)', borderRadius: '6px', color: activityView === id ? '#93c5fd' : '#666', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>{label}</button>

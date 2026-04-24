@@ -46,8 +46,10 @@ export async function POST(request) {
     if (!original) return NextResponse.json({ error: 'original required' }, { status: 400 })
     const { data: existing } = await supabase.from('settings').select('value').eq('key', 'folder_names').single()
     const names = existing?.value || {}
-    if (display?.trim()) {
-      names[original] = display.trim()
+    const trimmedDisplay = display?.trim()
+    const previous = names[original]
+    if (trimmedDisplay) {
+      names[original] = trimmedDisplay
     } else {
       delete names[original]
     }
@@ -60,6 +62,17 @@ export async function POST(request) {
       saveError = error
     }
     if (saveError) return NextResponse.json({ error: 'Server error' }, { status: 500 })
+
+    const summary = trimmedDisplay
+      ? `${original} → ${trimmedDisplay}`
+      : `${original} (cleared${previous ? ` "${previous}"` : ''})`
+    await supabase.from('audit_log').insert({
+      user_id: auth.user.id,
+      user_email: auth.user.email,
+      action: 'folder_renamed',
+      document_name: summary
+    })
+
     return NextResponse.json({ success: true, names })
   } catch {
     return NextResponse.json({ error: 'Server error' }, { status: 500 })

@@ -87,6 +87,12 @@ export async function POST(request) {
         .from('documents')
         .upload(path, buffer, { contentType: file.type, upsert: true })
       if (uploadError) return NextResponse.json({ error: 'Server error' }, { status: 500 })
+      await supabase.from('audit_log').insert({
+        user_id: user.id,
+        user_email: user.email,
+        action: 'file_uploaded',
+        document_name: path
+      })
       return NextResponse.json({ success: true, path })
     }
 
@@ -123,6 +129,13 @@ export async function POST(request) {
       }
       return NextResponse.json({ error: 'Server error' }, { status: 500 })
     }
+
+    await supabase.from('audit_log').insert({
+      user_id: user.id,
+      user_email: user.email,
+      action: 'file_uploaded',
+      document_name: path
+    })
 
     return NextResponse.json({ success: true, path })
 

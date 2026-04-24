@@ -37,7 +37,7 @@ export async function POST(request) {
     const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
     if (!isAdmin && !isEmployee) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-    const { oldPath, newPath } = await request.json()
+    const { oldPath, newPath, skipLog } = await request.json()
     if (typeof oldPath !== 'string' || typeof newPath !== 'string') {
       return NextResponse.json({ error: 'Missing oldPath or newPath' }, { status: 400 })
     }
@@ -94,6 +94,15 @@ export async function POST(request) {
     if (deleteError) {
       // File was copied successfully — log the delete failure but don't surface it as an error
       console.error('Move: copied to new path but failed to delete old path:', deleteError.message)
+    }
+
+    if (!skipLog) {
+      await supabase.from('audit_log').insert({
+        user_id: user.id,
+        user_email: user.email,
+        action: 'file_renamed',
+        document_name: `${oldPath} → ${newPath}`
+      })
     }
 
     return NextResponse.json({ success: true, newPath })

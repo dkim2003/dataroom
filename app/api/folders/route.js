@@ -23,7 +23,7 @@ export async function POST(request) {
     const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
     if (!isAdmin && !isEmployee) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-    const { folderPath, isRestricted, isInternal } = await request.json()
+    const { folderPath, isRestricted, isInternal, skipLog } = await request.json()
     // folderPath is relative, e.g. "01_Pitch_and_Overview/My New Folder"
     // Must be a safe relative path — no `..`, no leading/trailing slash, no control chars.
     if (!isSafeRelativePath(folderPath)) {
@@ -38,6 +38,15 @@ export async function POST(request) {
 
     if (error && !error.message.includes('already exists')) {
       return NextResponse.json({ error: 'Server error' }, { status: 500 })
+    }
+
+    if (!skipLog && !error) {
+      await supabase.from('audit_log').insert({
+        user_id: user.id,
+        user_email: user.email,
+        action: 'folder_created',
+        document_name: `${prefix}/${folderPath}`
+      })
     }
 
     return NextResponse.json({ success: true })

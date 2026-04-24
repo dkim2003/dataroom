@@ -99,6 +99,14 @@ export async function POST(request) {
     if (uploadError) {
       return NextResponse.json({ error: 'Server error' }, { status: 500 })
     }
+
+    await supabase.from('audit_log').insert({
+      user_id: user.id,
+      user_email: user.email,
+      action: 'pitch_deck_uploaded',
+      document_name: PITCH_DECK_PATH
+    })
+
     return NextResponse.json({ success: true })
   } catch {
     return NextResponse.json({ error: 'Server error' }, { status: 500 })
