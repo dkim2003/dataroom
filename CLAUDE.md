@@ -46,6 +46,8 @@ app/
   api/sort/route.js                     — AI auto-sort: reads PDF with Claude, returns folder + isRestricted + diligenceChecked; rate-limited
   api/sort-link/route.js                — AI auto-sort for links: returns folder + isRestricted; rate-limited, employee/admin only
   api/folders/route.js                  — POST: creates subfolder .keep placeholder; DELETE: removes .keep (path-validated, .keep-only)
+  api/folders/purge/route.js            — POST (admin/employee): recursively removes .keep + .emptyFolderPlaceholder sentinels for a top-level folder across all prefixes; used after deleteTopLevelFolder to clear Supabase-dashboard-created artifacts
+  api/pitch-deck/route.js               — GET: returns signed URL for current pitch deck (any approved user); POST: upload new pitch deck PDF (replaces existing, upsert, 100 MB limit, admin/employee only); DELETE: remove pitch deck
   api/trash/route.js                    — GET: list trash items (auto-purges expired); POST: move file to trash
   api/trash/restore/route.js            — POST: restore a trashed file back to its original path
   api/trash/delete/route.js             — POST: permanently delete a file from trash
@@ -125,7 +127,15 @@ The `documents` API returns both `documents` (files) and `folderPaths` (all fold
 
 **Trash system:** Deleted files (via three-dot menu) are moved to a `trash` table in Supabase, not hard-deleted. "Recently Deleted" sidebar button (employees/admin only) shows trashed items. From there users can Restore (moves file back to original path) or permanently Delete. Auto-purge of expired items runs on GET.
 
-**New Folder button:** Blue button in action bar (top-right above document list) when inside a top-level folder. Creates a `.keep` placeholder file via `/api/folders`.
+**New Folder button:** Blue button in action bar (top-right above document list) when creating a top-level folder or when inside a folder. Creates a `.keep` placeholder file via `/api/folders`. Access dropdown (Public / Restricted / Internal) is shown for top-level creation; inherits parent's access level for subfolders.
+
+**Top-level folder deletion:** `deleteTopLevelFolder` trashes all documents, deletes `.keep` placeholders, calls `/api/folders/purge` to remove Supabase-dashboard `.emptyFolderPlaceholder` files, removes folder from `folderOrder` and `folderNames`, and clears `activeFolder` if inside the deleted folder.
+
+**Folder display names:** `/api/folder-names` GET is accessible to any authenticated user so investors see the same display-name overrides as admins/employees. Write operations (POST/DELETE) remain admin/employee only.
+
+**Move prefix detection:** `handleMoveDoc` and `handleMoveFolder` explicitly check all three storage prefixes (internal > restricted > general) and refuse the move with an error if the target folder is not found in any prefix. No silent fallback to `general/`. This prevents files being silently routed to the wrong access tier during drag-and-drop.
+
+**Pitch deck tab:** Admins and employees can upload a PDF directly from the Pitch Deck tab. Upload replaces the existing pitch deck (`pitch_deck/current.pdf` in Supabase Storage). All approved users can view it via a signed URL fetched from `/api/pitch-deck`.
 
 **Standard subfolder structure** (27 subfolders across 10 top-level folders) created via admin panel → "Create Standard Subfolders". All currently in `general/` prefix.
 
@@ -178,7 +188,18 @@ Dashboard shows a spotlight tutorial on first login (tracked via `profiles.has_s
 ### Upcoming Work
 
 1. **DocuSign fix** — `AUTHORIZATION_INVALID_TOKEN` error from envelope API; investigate JWT auth flow and sandbox configuration
-2. **Pitch deck upload** — upload the actual pitch deck PDF after DocuSign is working
+
+### Recent Fixes (session 2026-04-20/23)
+
+1. **Pitch deck tab** — added `/api/pitch-deck` (GET/POST/DELETE) with a dedicated `pitch_deck/current.pdf` storage path. Admins/employees can upload from the Pitch Deck tab directly; upload replaces the existing file. No longer reliant on Sol or hardcoded folders.
+2. **Dynamic AI sort** — `/api/sort` and `/api/sort-link` no longer use hardcoded folder lists. Both accept `folderPaths` from the client and build the folder list dynamically each call. Sort endpoints now require employee/admin (any auth'd user could previously trigger Claude API).
+3. **Hardcoded `FALLBACK_FOLDERS` removed** — dashboard no longer re-injects deleted folders. `baseFolders` is now built purely from live `folderPaths`. Folders can now be deleted permanently without reappearing.
+4. **Top-level folder deletion fixed** — `deleteTopLevelFolder` now removes the folder from `folderOrder` and `folderNames` state and calls `/api/folders/purge` to clean up `.emptyFolderPlaceholder` files created by Supabase's dashboard UI. This was the root cause of folders like "Market Opportunity", "Product Technology" surviving deletion.
+5. **`/api/folders/purge`** — new endpoint that recursively removes `.keep` and `.emptyFolderPlaceholder` sentinel files across all storage prefixes for a given top-level folder name.
+6. **Move prefix detection hardened** — `handleMoveDoc` and `handleMoveFolder` now explicitly check all three prefixes (internal > restricted > general) and refuse with an error message if the target folder is not present in any prefix. Previously silently defaulted to `general/`, causing files to land in the wrong access tier.
+7. **`/api/folder-names` GET opened to all auth'd users** — investors now see the same display name overrides as admins/employees, fixing sidebar folder names showing as "- Corporate, Legal" instead of "1 - Corporate, Legal".
+8. **Back button label fixed** — back button now resolves folder segments via `folderNames` override map, matching the heading.
+9. **Cross-prefix move policy** — `/api/documents/move` now allows escalating moves (general → restricted, general → internal) while blocking demotion moves (internal → general). Previously cross-prefix was blocked entirely.
 
 ### Recent Fixes (session ending 2026-04-08)
 

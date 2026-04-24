@@ -154,15 +154,15 @@ export default function LoginPage() {
     return (
       <div style={styles.page}>
         <div style={styles.bgImage} />
-        <div style={{ textAlign: 'center', maxWidth: '320px', padding: '0 24px', position: 'relative', zIndex: 1 }}>
+        <div style={{ textAlign: 'center', maxWidth: '480px', padding: '0 32px', position: 'relative', zIndex: 1 }}>
           <div style={styles.iconCircle}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="1.5">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="1.5">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
             </svg>
           </div>
-          <h1 style={styles.heading}>Access Pending</h1>
-          <p style={styles.subtext}>Your account is awaiting approval. You will receive access once an administrator reviews your request.</p>
-          <button onClick={() => { setPending(false); setStep('greeting'); }} style={styles.backLink}>
+          <h1 style={{ ...styles.heading, fontSize: '32px' }}>Access Pending</h1>
+          <p style={{ ...styles.subtext, fontSize: '22px', lineHeight: '1.7' }}>Your access request is pending and will be reviewed.<br/>If you are approved, you will receive a confirmation email with a sign-in link.</p>
+          <button onClick={() => { setPending(false); setStep('greeting'); }} style={{ ...styles.backLink, fontSize: '20px' }}>
             Back to start
           </button>
         </div>
@@ -187,7 +187,7 @@ export default function LoginPage() {
           <p style={styles.subtext}>Your access request was not approved. You can re-submit your request below.</p>
           <button
             onClick={() => { setRejected(false); setStep('investor'); setError(''); }}
-            style={{ ...styles.submitBtn, marginTop: '20px', padding: '11px', fontSize: '15px' }}
+            style={{ ...styles.submitBtn, marginTop: '20px' }}
           >
             Re-request access
           </button>
@@ -207,26 +207,26 @@ export default function LoginPage() {
         <div style={{ textAlign: 'center', width: '360px', padding: '0 24px', position: 'relative', zIndex: 1 }}>
           {/* Sol indicator */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '28px' }}>
-            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6' }}/>
-            <span style={{ fontSize: '12px', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em' }}>SOL</span>
+            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#1e40af' }}/>
+            <span style={{ fontSize: '14px', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em' }}>SOL</span>
           </div>
 
           {/* Typewriter greeting */}
-          <p style={{ fontSize: '22px', fontWeight: '300', color: '#e0e0e0', lineHeight: '1.6', marginBottom: '48px', height: '130px', fontFamily: 'Exo 2, sans-serif' }}>
+          <p style={{ fontSize: '26px', fontWeight: '300', color: '#e0e0e0', lineHeight: '1.6', marginBottom: '48px', height: '130px', fontFamily: 'Exo 2, sans-serif' }}>
             {solText}
-            <span style={{ opacity: solText.length < fullGreeting.length ? 1 : 0, borderRight: '1px solid #3b82f6', marginLeft: '1px' }}>&nbsp;</span>
+            <span style={{ opacity: solText.length < fullGreeting.length ? 1 : 0, borderRight: '1px solid #1e40af', marginLeft: '1px' }}>&nbsp;</span>
           </p>
 
           {/* Three choice buttons */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <button onClick={() => setStep('investor')} style={styles.choiceBtn}>
-              I'm an investor
+            <button onClick={() => setStep('login')} style={styles.choiceBtnBlue}>
+              Log-in<br/><span style={{ fontSize: '15px', fontWeight: '400', opacity: 0.9 }}>(I already have an account)</span>
             </button>
-            <button onClick={() => setStep('employee')} style={styles.choiceBtn}>
-              I'm an employee
+            <button onClick={() => setStep('investor')} style={{ ...styles.choiceBtnOutline, lineHeight: '1.4' }}>
+              Request for<br/>investor access
             </button>
-            <button onClick={() => setStep('login')} style={{ ...styles.choiceBtn, ...styles.choiceBtnMuted }}>
-              I already have an account
+            <button onClick={() => setStep('employee')} style={{ ...styles.choiceBtnOutline, lineHeight: '1.4' }}>
+              Request for<br/>employee access
             </button>
           </div>
         </div>
@@ -242,19 +242,19 @@ export default function LoginPage() {
         <div style={{ width: '100%', maxWidth: '320px', padding: '0 24px', position: 'relative', zIndex: 1 }}>
           <div style={{ textAlign: 'center', marginBottom: '28px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px' }}>
-              <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6' }}/>
-              <span style={{ fontSize: '12px', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em' }}>SOL</span>
+              <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#1e40af' }}/>
+              <span style={{ fontSize: '14px', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em' }}>SOL</span>
             </div>
-            <h1 style={{ fontSize: '26px', fontWeight: '300', color: '#fff', marginBottom: '6px', fontFamily: 'Exo 2, sans-serif' }}>Request investor access</h1>
-            <p style={{ fontSize: '16px', color: '#555', fontFamily: 'Exo 2, sans-serif' }}>Your request will be reviewed by the administrator.</p>
+            <h1 style={{ fontSize: '31px', fontWeight: '300', color: '#fff', marginBottom: '6px', fontFamily: 'Exo 2, sans-serif' }}>Request investor access</h1>
+            <p style={{ fontSize: '19px', color: '#fff', fontFamily: 'Exo 2, sans-serif' }}>Your request will be reviewed by the administrator.</p>
           </div>
 
           <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <input type="text" placeholder="Full name" value={fullName} onChange={e => setFullName(e.target.value)} required style={styles.input}/>
             <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required style={styles.input}/>
             <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required style={styles.input}/>
-            {error && <p style={{ color: '#f87171', fontSize: '13px' }}>{error}</p>}
-            <button type="submit" disabled={loading} style={styles.submitBtn}>
+            {error && <p style={{ color: '#f87171', fontSize: '16px' }}>{error}</p>}
+            <button type="submit" disabled={loading} style={styles.submitBtnOutline}>
               {loading ? 'Please wait...' : 'Request access'}
             </button>
           </form>
@@ -273,19 +273,19 @@ export default function LoginPage() {
         <div style={{ width: '100%', maxWidth: '320px', padding: '0 24px', position: 'relative', zIndex: 1 }}>
           <div style={{ textAlign: 'center', marginBottom: '28px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px' }}>
-              <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6' }}/>
-              <span style={{ fontSize: '12px', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em' }}>SOL</span>
+              <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#1e40af' }}/>
+              <span style={{ fontSize: '14px', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em' }}>SOL</span>
             </div>
-            <h1 style={{ fontSize: '26px', fontWeight: '300', color: '#fff', marginBottom: '6px', fontFamily: 'Exo 2, sans-serif' }}>Request employee access</h1>
-            <p style={{ fontSize: '16px', color: '#555', fontFamily: 'Exo 2, sans-serif' }}>Your request will be reviewed by the administrator.</p>
+            <h1 style={{ fontSize: '31px', fontWeight: '300', color: '#fff', marginBottom: '6px', fontFamily: 'Exo 2, sans-serif' }}>Request employee access</h1>
+            <p style={{ fontSize: '19px', color: '#fff', fontFamily: 'Exo 2, sans-serif' }}>Your request will be reviewed by the administrator.</p>
           </div>
 
           <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <input type="text" placeholder="Full name" value={fullName} onChange={e => setFullName(e.target.value)} required style={styles.input}/>
             <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required style={styles.input}/>
             <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required style={styles.input}/>
-            {error && <p style={{ color: '#f87171', fontSize: '13px' }}>{error}</p>}
-            <button type="submit" disabled={loading} style={styles.submitBtn}>
+            {error && <p style={{ color: '#f87171', fontSize: '16px' }}>{error}</p>}
+            <button type="submit" disabled={loading} style={styles.submitBtnOutline}>
               {loading ? 'Please wait...' : 'Request access'}
             </button>
           </form>
@@ -303,17 +303,17 @@ export default function LoginPage() {
       <div style={{ width: '100%', maxWidth: '320px', padding: '0 24px', position: 'relative', zIndex: 1 }}>
         <div style={{ textAlign: 'center', marginBottom: '28px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px' }}>
-            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6' }}/>
-            <span style={{ fontSize: '12px', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em' }}>SOL</span>
+            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#1e40af' }}/>
+            <span style={{ fontSize: '14px', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em' }}>SOL</span>
           </div>
-          <h1 style={{ fontSize: '26px', fontWeight: '300', color: '#fff', marginBottom: '6px', fontFamily: 'Exo 2, sans-serif' }}>Welcome back</h1>
-          <p style={{ fontSize: '16px', color: '#555', fontFamily: 'Exo 2, sans-serif' }}>Space Launch Technologies VDR</p>
+          <h1 style={{ fontSize: '31px', fontWeight: '300', color: '#fff', marginBottom: '6px', fontFamily: 'Exo 2, sans-serif' }}>Welcome back</h1>
+          <p style={{ fontSize: '19px', color: '#fff', fontFamily: 'Exo 2, sans-serif' }}>Space Launch Technologies VDR</p>
         </div>
 
         <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required style={styles.input}/>
           <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required style={styles.input}/>
-          {error && <p style={{ color: '#f87171', fontSize: '13px' }}>{error}</p>}
+          {error && <p style={{ color: '#f87171', fontSize: '16px' }}>{error}</p>}
           <button type="submit" disabled={loading} style={styles.submitBtn}>
             {loading ? 'Please wait...' : 'Sign in'}
           </button>
@@ -357,15 +357,15 @@ const styles = {
     margin: '0 auto 20px',
   },
   heading: {
-    fontSize: '20px',
+    fontSize: '24px',
     fontWeight: '300',
     color: '#fff',
     marginBottom: '10px',
     fontFamily: 'Exo 2, sans-serif',
   },
   subtext: {
-    fontSize: '13px',
-    color: '#666',
+    fontSize: '16px',
+    color: '#fff',
     lineHeight: '1.6',
     fontFamily: 'Exo 2, sans-serif',
   },
@@ -373,29 +373,38 @@ const styles = {
     display: 'block',
     textAlign: 'center',
     marginTop: '20px',
-    fontSize: '13px',
-    color: '#555',
+    fontSize: '16px',
+    color: '#fff',
     background: 'none',
     border: 'none',
     cursor: 'pointer',
     fontFamily: 'Exo 2, sans-serif',
     width: '100%',
   },
-  choiceBtn: {
+  choiceBtnBlue: {
     width: '100%',
-    padding: '13px',
-    background: '#111',
-    border: '1px solid #222',
-    borderRadius: '8px',
-    color: '#ccc',
-    fontSize: '17px',
+    padding: '18px',
+    background: '#1e40af',
+    border: 'none',
+    borderRadius: '999px',
+    color: '#fff',
+    fontSize: '20px',
+    fontWeight: '600',
     fontFamily: 'Exo 2, sans-serif',
     cursor: 'pointer',
+    lineHeight: '1.4',
   },
-  choiceBtnMuted: {
-    color: '#666',
-    borderColor: '#1a1a1a',
-    marginTop: '4px',
+  choiceBtnOutline: {
+    width: '100%',
+    padding: '18px',
+    background: '#fff',
+    border: '2px solid #1e40af',
+    borderRadius: '999px',
+    color: '#1e40af',
+    fontSize: '20px',
+    fontWeight: '600',
+    fontFamily: 'Exo 2, sans-serif',
+    cursor: 'pointer',
   },
   input: {
     padding: '11px 14px',
@@ -403,18 +412,32 @@ const styles = {
     border: '1px solid #222',
     borderRadius: '8px',
     color: '#fff',
-    fontSize: '16px',
+    fontSize: '19px',
     fontFamily: 'Exo 2, sans-serif',
     outline: 'none',
     width: '100%',
   },
   submitBtn: {
-    padding: '12px',
-    background: '#fff',
-    color: '#080808',
+    width: '100%',
+    padding: '18px',
+    background: '#1e40af',
+    color: '#fff',
     border: 'none',
-    borderRadius: '8px',
-    fontSize: '16px',
+    borderRadius: '999px',
+    fontSize: '19px',
+    fontWeight: '600',
+    fontFamily: 'Exo 2, sans-serif',
+    cursor: 'pointer',
+    marginTop: '4px',
+  },
+  submitBtnOutline: {
+    width: '100%',
+    padding: '18px',
+    background: '#fff',
+    color: '#1e40af',
+    border: '2px solid #1e40af',
+    borderRadius: '999px',
+    fontSize: '19px',
     fontWeight: '600',
     fontFamily: 'Exo 2, sans-serif',
     cursor: 'pointer',
