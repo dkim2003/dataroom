@@ -3345,7 +3345,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '28px' }}>
                 <div>
                   <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', marginBottom: '6px' }}>PITCH DECK</h1>
-                  <p style={{ fontSize: '14px', color: '#777' }}>Space Launch Technologies — Series A</p>
+                  <p style={{ fontSize: '14px', color: '#777' }}>Space Launch Technologies — Seed Round</p>
                 </div>
                 {(isEmployee || isAdmin) && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
