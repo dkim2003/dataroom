@@ -64,7 +64,7 @@ app/
   api/admin/approve/route.js            — POST: approve pending user, send magic-link email. Looks up email/name from DB (not body). HTML-escapes fullName.
   api/private/route.js                  — CRUD for private_items table (notes/items); scoped to user.id via RLS
   api/private-files/route.js            — GET/POST/PATCH/DELETE for private Storage files; path-validated, confined to private/{userId}/
-  api/links/route.js                    — CRUD for document_links; URL-validated (http(s) only); PATCH/DELETE owner-or-admin
+  api/links/route.js                    — CRUD for document_links; URL-validated (http(s) only); PATCH rename = owner-or-admin; PATCH folder move = any employee/admin (private links: owner-or-admin); DELETE = owner-or-admin
   api/re-request-access/route.js        — POST: re-request access after rejection
 lib/
   docusign.js                           — Shared DocuSign JWT / envelope helpers: getAccessToken, getAccountInfo, getEnvelopeStatus
@@ -158,7 +158,11 @@ All document views are logged to `audit_log` table. Last-opened timestamps per u
 - **No lock styling** on restricted docs in grid — restricted badge shown instead; clicking redirects to NDA
 - **Action bar** (below upload zone, above content): back button left + New folder button right (blue); always rendered when `activeFolder` is set
 - **New folder button**: bright blue styling (`rgba(59,130,246,0.15)` bg, `#93c5fd` text)
-- **Drag-and-drop**: files and subfolders can be dragged to sidebar folders; `draggingDoc` / `draggingFolder` states
+- **Drag-and-drop**: files, subfolders, and links can be dragged to sidebar folders AND to subfolder rows/cards in the main content area; `draggingDoc` / `draggingFolder` / `draggingLink` states
+  - `handleMoveDoc` and `handleMoveFolder` clamp the target prefix up to the source's restriction level (`RESTRICTION_LEVEL = { general:0, restricted:1, internal:2 }`) so an `internal/` file dragged to a `general/` folder stays at `internal/`; the API enforces the same demotion guard as a second layer
+  - `handleMoveLink` calls `PATCH /api/links` with `{ id, folder }` and updates `links` state from the server response
+  - Links in the documents tab render in 5 separate branches — all five have `draggable`, `onDragStart`, `onDragEnd`; private-tab links are not draggable to document folders
+  - Subfolder rows/cards (both list and grid, both subfolders-only and combined views) have `onDragOver`/`onDragLeave`/`onDrop` handlers in addition to the sidebar
 
 ### NDA Flow
 
@@ -194,6 +198,14 @@ Dashboard shows a spotlight tutorial on first login (tracked via `profiles.has_s
    - `nda/page.js:25` — `useEffect` calls `completeNda` declared below; also missing from the deps array (separate warning)
    - `dashboard/page.js:1144` — `window.location.href = '/nda'` flagged as "This value cannot be modified"; this is a linter false positive on a valid redirect pattern. Either suppress with an `eslint-disable-next-line` or rewrite as `router.push('/nda')` for consistency with the rest of the file.
    - **Fix approach**: hoist each `async function loadX` into a `useCallback` (or move them above the effects that call them). Cleanest is probably extracting them to module-scope helpers that take `setX` setters as args, but that's a bigger refactor.
+
+### Recent Fixes (session 2026-05-27)
+
+1. **Internal-file drag-and-drop fixed** — `handleMoveDoc` and `handleMoveFolder` now clamp the chosen target prefix up to the source's restriction level. Previously, dragging an `internal/` file to a folder that existed only in `general/` would pick `general/` as the target prefix and be rejected by the API's demotion guard (silently). Now the prefix is escalated to match the source.
+2. **Drop targets added to main-content subfolders** — subfolder rows and cards in the main document area now accept drops (previously only sidebar folders were drop targets). Both list-view rows and grid-view cards in all four subfolder render branches gained `onDragOver`/`onDragLeave`/`onDrop` handlers.
+3. **Link drag-and-drop added** — links can now be dragged to any folder. New `draggingLink` state and `handleMoveLink` function (calls `PATCH /api/links` with `{ id, folder }`). Drag handlers added to all five link-render branches in the documents tab.
+4. **`/api/links` PATCH permission split** — folder moves (`folder` field, no `name` field) on non-private links are now allowed for any employee/admin, matching how file moves work. Renames and private-link moves still require creator-or-admin. Server re-derives `internal`/`restricted` flags from storage on every folder change.
+5. **Login "Email not confirmed" error message** — `app/login/page.js` now intercepts the Supabase string `"Email not confirmed"` and displays `"Email not confirmed. Please check your inbox for a confirmation and authentication link."` instead. All other error messages pass through unchanged.
 
 ### Recent Fixes (session 2026-04-20/23)
 

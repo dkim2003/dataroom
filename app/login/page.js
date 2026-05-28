@@ -44,7 +44,9 @@ export default function LoginPage() {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
     if (error) {
-      setError(error.message);
+      setError(error.message === 'Email not confirmed'
+        ? 'Email not confirmed. Please check your inbox for a confirmation and authentication link.'
+        : error.message);
       setLoading(false);
       return;
     }

@@ -103,7 +103,10 @@ export async function POST(request) {
   }
 }
 
-// PATCH /api/links — rename a link (creator or admin only)
+// PATCH /api/links — rename or move a link (creator or admin only)
+// Accepts { id, name?, folder? }. When `folder` is provided, the link's
+// restricted/internal flags are re-derived server-side from where the new
+// folder lives in storage — client cannot self-classify a link.
 export async function PATCH(request) {
   try {
     const auth = await verifyUser(request)
@@ -112,15 +115,52 @@ export async function PATCH(request) {
     const isEmployee = profile?.role === 'pre_nda_employee' || profile?.role === 'post_nda_employee'
     const isAdmin    = user.email === ADMIN_EMAIL || profile?.is_admin === true
     if (!isEmployee && !isAdmin) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    const { id, name } = await request.json()
-    if (!id || !name?.trim()) return NextResponse.json({ error: 'id and name required' }, { status: 400 })
+    const { id, name, folder } = await request.json()
+    if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
+    if (name === undefined && folder === undefined)
+      return NextResponse.json({ error: 'nothing to update' }, { status: 400 })
 
-    const { data: existing } = await supabase.from('document_links').select('created_by').eq('id', id).single()
+    const { data: existing } = await supabase.from('document_links').select('created_by, folder').eq('id', id).single()
     if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-    if (existing.created_by !== user.id && !isAdmin)
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    // Permission model:
+    //  - Rename (any change to `name`): creator or admin only.
+    //  - Move (`folder` change, no `name` change) on a non-private link:
+    //    allowed for any employee/admin, matching how file moves work
+    //    (any employee can re-shelve any file regardless of who uploaded).
+    //  - Move on a private link: creator or admin only — private links are
+    //    user-scoped, so a non-owner moving one would relocate someone
+    //    else's note out of their private workspace.
+    const isOwner = existing.created_by === user.id
+    const isMoveOnly = name === undefined && folder !== undefined
+    const isPrivateLink = existing.folder === '__private__'
+    if (!isMoveOnly || isPrivateLink) {
+      if (!isOwner && !isAdmin) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
 
-    const { data, error } = await supabase.from('document_links').update({ name: name.trim() }).eq('id', id).select().single()
+    const updates = {}
+    if (name !== undefined) {
+      if (typeof name !== 'string' || !name.trim()) return NextResponse.json({ error: 'invalid name' }, { status: 400 })
+      updates.name = name.trim()
+    }
+    if (folder !== undefined) {
+      if (typeof folder !== 'string' || !folder.trim()) return NextResponse.json({ error: 'invalid folder' }, { status: 400 })
+      const trimmedFolder = folder.trim()
+      if (trimmedFolder === '__private__') return NextResponse.json({ error: 'invalid folder' }, { status: 400 })
+      // Re-derive restricted/internal from storage so the client can't
+      // silently downgrade a link's visibility by moving it.
+      const topFolder = trimmedFolder.split('/')[0]
+      const [{ data: internalRoot }, { data: restrictedRoot }] = await Promise.all([
+        supabase.storage.from('documents').list('internal', { limit: 500 }),
+        supabase.storage.from('documents').list('restricted', { limit: 500 })
+      ])
+      const internalNames = new Set((internalRoot || []).map(f => f.name))
+      const restrictedNames = new Set((restrictedRoot || []).map(f => f.name))
+      updates.folder = trimmedFolder
+      updates.internal = internalNames.has(topFolder)
+      updates.restricted = restrictedNames.has(topFolder)
+    }
+
+    const { data, error } = await supabase.from('document_links').update(updates).eq('id', id).select().single()
     if (error) return NextResponse.json({ error: 'Server error' }, { status: 500 })
     return NextResponse.json({ link: data })
   } catch {

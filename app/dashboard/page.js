@@ -228,6 +228,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const dropZoneInputRef = useRef(null);
                             const [draggingDoc, setDraggingDoc] = useState(null);
                             const [draggingFolder, setDraggingFolder] = useState(null);
+                            const [draggingLink, setDraggingLink] = useState(null);
                             const [dragOverFolder, setDragOverFolder] = useState(null);
                             const [movingDocPath, setMovingDocPath] = useState(null);
                             const [renamingDocPath, setRenamingDocPath] = useState(null);
@@ -1326,6 +1327,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             async function handleMoveDoc(doc, targetFolder) {
                               const parts = doc.path.split('/');
                               const filename = parts[parts.length - 1];
+                              const sourcePrefix = parts[0];
                               // Determine the storage prefix from the target folder's actual presence
                               // in folderPaths. Prefer internal > restricted > general so a folder
                               // that exists in multiple prefixes routes to the most restricted one.
@@ -1342,6 +1344,18 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               else if (hasRestricted) targetPrefix = 'restricted';
                               else if (hasGeneral) targetPrefix = 'general';
                               else { taskDone('Move failed — target folder not found', 'error'); return; }
+                              // Clamp the target prefix up to the source's restriction level so a
+                              // drag never demotes the file. The /api/documents/move route rejects
+                              // demotion moves (internal → restricted/general, restricted → general);
+                              // without this clamp, dragging an internal/ file to a folder name that
+                              // only exists under general/ would pick targetPrefix='general' and the
+                              // server would reject it as a demotion — the user would see "Move
+                              // failed" with no obvious cause. The upload step creates the
+                              // {sourcePrefix}/{targetFolder}/ path implicitly if it doesn't exist.
+                              const RESTRICTION_LEVEL = { general: 0, restricted: 1, internal: 2 };
+                              if ((RESTRICTION_LEVEL[targetPrefix] ?? 0) < (RESTRICTION_LEVEL[sourcePrefix] ?? 0)) {
+                                targetPrefix = sourcePrefix;
+                              }
                               const newPath = `${targetPrefix}/${targetFolder}/${filename}`;
                               if (newPath === doc.path) return;
                               taskStart('Moving file...');
@@ -1372,15 +1386,24 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               const hasInternal = folderPaths.some(fp => fp.startsWith('internal/') && fp.split('/')[1] === topTarget);
                               const hasRestricted = folderPaths.some(fp => fp.startsWith('restricted/') && fp.split('/')[1] === topTarget);
                               const hasGeneral = folderPaths.some(fp => fp.startsWith('general/') && fp.split('/')[1] === topTarget);
-                              let targetPrefix;
-                              if (hasInternal) targetPrefix = 'internal';
-                              else if (hasRestricted) targetPrefix = 'restricted';
-                              else if (hasGeneral) targetPrefix = 'general';
+                              let basePrefix;
+                              if (hasInternal) basePrefix = 'internal';
+                              else if (hasRestricted) basePrefix = 'restricted';
+                              else if (hasGeneral) basePrefix = 'general';
                               else { taskDone('Move failed — target folder not found', 'error'); return; }
+                              // Per-file prefix clamp (see handleMoveDoc). A "folder" can group
+                              // files across multiple storage prefixes — clamp each file up to its
+                              // own source prefix so an internal file doesn't get demoted just
+                              // because a general/ sibling exists at the destination name.
+                              const RESTRICTION_LEVEL = { general: 0, restricted: 1, internal: 2 };
                               taskStart('Moving folder...');
                               const { data: { session } } = await supabase.auth.getSession();
                               for (const doc of folderDocs) {
                                 const p = doc.path.split('/');
+                                const sourcePrefix = p[0];
+                                const targetPrefix = ((RESTRICTION_LEVEL[basePrefix] ?? 0) < (RESTRICTION_LEVEL[sourcePrefix] ?? 0))
+                                  ? sourcePrefix
+                                  : basePrefix;
                                 p[0] = targetPrefix;
                                 p[1] = targetFolder;
                                 const newPath = p.join('/');
@@ -1392,6 +1415,24 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               }
                               await loadDocuments();
                               taskDone('Folder moved');
+                            }
+
+                            async function handleMoveLink(link, targetFolder) {
+                              if (link.folder === targetFolder) return;
+                              taskStart('Moving link...');
+                              const { data: { session } } = await supabase.auth.getSession();
+                              const response = await fetch('/api/links', {
+                                method: 'PATCH',
+                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ id: link.id, folder: targetFolder })
+                              });
+                              const result = await response.json();
+                              if (!result.error && result.link) {
+                                setLinks(prev => prev.map(l => l.id === link.id ? result.link : l));
+                                taskDone('Link moved');
+                              } else {
+                                taskDone('Move failed', 'error');
+                              }
                             }
 
                             async function handleRenameDoc(doc, newName) {
@@ -1896,9 +1937,9 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                   <div key={subPath}>
                     <div
                       style={{ display: 'flex', alignItems: 'center', background: isSubDragOver ? 'rgba(59,130,246,0.12)' : subActive ? 'rgba(255,255,255,0.04)' : 'none', borderLeft: isSubDragOver ? '2px solid #3b82f6' : subActive ? '2px solid #3b82f6' : '2px solid transparent', transition: 'background 0.1s' }}
-                      onDragOver={(e) => { if (draggingDoc || draggingFolder) { e.preventDefault(); setDragOverFolder(subPath); } }}
+                      onDragOver={(e) => { if (draggingDoc || draggingFolder || draggingLink) { e.preventDefault(); setDragOverFolder(subPath); } }}
                       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); }}
-                      onDrop={(e) => { e.preventDefault(); setDragOverFolder(null); if (draggingDoc) handleMoveDoc(draggingDoc, subPath); if (draggingFolder) handleMoveFolder(draggingFolder, subPath); }}
+                      onDrop={(e) => { e.preventDefault(); setDragOverFolder(null); if (draggingDoc) handleMoveDoc(draggingDoc, subPath); if (draggingFolder) handleMoveFolder(draggingFolder, subPath); if (draggingLink) handleMoveLink(draggingLink, subPath); }}
                     >
                       <button
                         onClick={() => { setActiveFolder(subPath); setActiveTab('documents'); }}
@@ -1945,7 +1986,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     onDragOver={(e) => {
                       e.preventDefault();
                       if (reorderingFolder && reorderingFolder !== folder) { setReorderDropTarget(folder); }
-                      else if (draggingDoc || draggingFolder) { setDragOverFolder(folder); }
+                      else if (draggingDoc || draggingFolder || draggingLink) { setDragOverFolder(folder); }
                     }}
                     onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) { setDragOverFolder(null); setReorderDropTarget(null); } }}
                     onDrop={(e) => {
@@ -1961,6 +2002,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                         setDragOverFolder(null);
                         if (draggingDoc) handleMoveDoc(draggingDoc, folder);
                         if (draggingFolder) handleMoveFolder(draggingFolder, folder);
+                        if (draggingLink) handleMoveLink(draggingLink, folder);
                       }
                       setReorderingFolder(null); setReorderDropTarget(null);
                     }}
@@ -2386,8 +2428,20 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                         <span style={{ fontSize: '11px', fontWeight: '600', color: '#444', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em' }}>DATE CREATED</span>
                         <span />
                       </div>
-                      {filteredLinks.map(link => (
-                        <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && openSafeLink(link.url)}>
+                      {filteredLinks.map(link => {
+                        const isPrivateLink = link.folder === '__private__';
+                        // Any employee/admin can move any non-private link, matching how file
+                        // moves work. Private links remain owner-or-admin only.
+                        const canDrag = (isEmployee || isAdmin) && (!isPrivateLink || link.created_by === user.id || isAdmin);
+                        return (
+                        <div
+                          key={link.id}
+                          draggable={canDrag && renamingLinkId !== link.id}
+                          onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingLink(link); }}
+                          onDragEnd={() => { setDraggingLink(null); setDragOverFolder(null); }}
+                          style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }}
+                          onClick={() => renamingLinkId !== link.id && openSafeLink(link.url)}
+                        >
                           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                             {renamingLinkId === link.id ? <input autoFocus value={renameLinkValue} onChange={e => setRenameLinkValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') renameLink(link.id, renameLinkValue); if (e.key === 'Escape') setRenamingLinkId(null); }} onBlur={() => renameLink(link.id, renameLinkValue)} onClick={e => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} /> : <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>}
@@ -2409,7 +2463,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             )}
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </>
@@ -2428,8 +2483,11 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               draggable={isEmployee || isAdmin}
                               onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingFolder({ topFolder: activeFolder, sub }); }}
                               onDragEnd={() => { setDraggingFolder(null); setDragOverFolder(null); }}
+                              onDragOver={(e) => { if ((draggingDoc || draggingFolder || draggingLink) && folderPath !== `${draggingFolder?.topFolder}/${draggingFolder?.sub}`) { e.preventDefault(); setDragOverFolder(folderPath); } }}
+                              onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); }}
+                              onDrop={(e) => { e.preventDefault(); setDragOverFolder(null); if (draggingDoc) handleMoveDoc(draggingDoc, folderPath); else if (draggingFolder && folderPath !== `${draggingFolder.topFolder}/${draggingFolder.sub}`) handleMoveFolder(draggingFolder, folderPath); else if (draggingLink) handleMoveLink(draggingLink, folderPath); }}
                               onClick={() => !isRenaming && setActiveFolder(folderPath)}
-                              style={{ display: 'flex', flexDirection: 'column', background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '10px', cursor: 'pointer', transition: 'border-color 0.15s', position: 'relative' }}
+                              style={{ display: 'flex', flexDirection: 'column', background: dragOverFolder === folderPath ? 'rgba(59,130,246,0.08)' : '#111', border: `1px solid ${dragOverFolder === folderPath ? 'rgba(59,130,246,0.5)' : 'rgba(255,255,255,0.07)'}`, borderRadius: '10px', cursor: 'pointer', transition: 'border-color 0.15s', position: 'relative' }}
                             >
                               <div style={{ height: '120px', background: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px 10px 0 0', overflow: 'hidden' }}>
                                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
@@ -2474,7 +2532,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const folderPath = `${activeFolder}/${sub}`;
                             const isRenaming = renamingFolderPath === folderPath;
                             return (
-                              <div key={sub} draggable={isEmployee || isAdmin} onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingFolder({ topFolder: activeFolder, sub }); }} onDragEnd={() => { setDraggingFolder(null); setDragOverFolder(null); }} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}>
+                              <div key={sub} draggable={isEmployee || isAdmin} onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingFolder({ topFolder: activeFolder, sub }); }} onDragEnd={() => { setDraggingFolder(null); setDragOverFolder(null); }} onDragOver={(e) => { if ((draggingDoc || draggingFolder || draggingLink) && folderPath !== `${draggingFolder?.topFolder}/${draggingFolder?.sub}`) { e.preventDefault(); setDragOverFolder(folderPath); } }} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); }} onDrop={(e) => { e.preventDefault(); setDragOverFolder(null); if (draggingDoc) handleMoveDoc(draggingDoc, folderPath); else if (draggingFolder && folderPath !== `${draggingFolder.topFolder}/${draggingFolder.sub}`) handleMoveFolder(draggingFolder, folderPath); else if (draggingLink) handleMoveLink(draggingLink, folderPath); }} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: dragOverFolder === folderPath ? 'rgba(59,130,246,0.12)' : 'rgba(255,255,255,0.02)', border: `1px solid ${dragOverFolder === folderPath ? 'rgba(59,130,246,0.5)' : 'rgba(255,255,255,0.05)'}`, borderRadius: '6px', cursor: 'pointer' }}>
                                 <div onClick={() => !isRenaming && setActiveFolder(folderPath)} style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                                   {isRenaming ? (
@@ -2515,7 +2573,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                           <span />
                         </div>
                         {filteredLinks.map(link => (
-                          <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && openSafeLink(link.url)}>
+                          <div key={link.id} draggable={(isEmployee || isAdmin) && renamingLinkId !== link.id} onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingLink(link); }} onDragEnd={() => { setDraggingLink(null); setDragOverFolder(null); }} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && openSafeLink(link.url)}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                               {renamingLinkId === link.id ? <input autoFocus value={renameLinkValue} onChange={e => setRenameLinkValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') renameLink(link.id, renameLinkValue); if (e.key === 'Escape') setRenamingLinkId(null); }} onBlur={() => renameLink(link.id, renameLinkValue)} onClick={e => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} /> : <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>}
@@ -2678,7 +2736,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                       <span />
                     </div>
                     {filteredLinks.map(link => (
-                      <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && openSafeLink(link.url)}>
+                      <div key={link.id} draggable={(isEmployee || isAdmin) && renamingLinkId !== link.id} onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingLink(link); }} onDragEnd={() => { setDraggingLink(null); setDragOverFolder(null); }} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: renamingLinkId === link.id ? 'default' : 'pointer' }} onClick={() => renamingLinkId !== link.id && openSafeLink(link.url)}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                           {renamingLinkId === link.id ? <input autoFocus value={renameLinkValue} onChange={e => setRenameLinkValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') renameLink(link.id, renameLinkValue); if (e.key === 'Escape') setRenamingLinkId(null); }} onBlur={() => renameLink(link.id, renameLinkValue)} onClick={e => e.stopPropagation()} style={{ fontSize: '14px', fontWeight: '500', color: '#fff', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '4px', padding: '2px 8px', fontFamily: 'Exo 2, sans-serif', outline: 'none', flex: 1, minWidth: 0 }} /> : <span style={{ fontSize: '14px', fontWeight: '500', color: '#e0e0e0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</span>}
@@ -2742,8 +2800,11 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               draggable={isEmployee || isAdmin}
                               onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingFolder({ topFolder: activeFolder, sub }); }}
                               onDragEnd={() => { setDraggingFolder(null); setDragOverFolder(null); }}
+                              onDragOver={(e) => { if ((draggingDoc || draggingFolder || draggingLink) && folderPath !== `${draggingFolder?.topFolder}/${draggingFolder?.sub}`) { e.preventDefault(); setDragOverFolder(folderPath); } }}
+                              onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); }}
+                              onDrop={(e) => { e.preventDefault(); setDragOverFolder(null); if (draggingDoc) handleMoveDoc(draggingDoc, folderPath); else if (draggingFolder && folderPath !== `${draggingFolder.topFolder}/${draggingFolder.sub}`) handleMoveFolder(draggingFolder, folderPath); else if (draggingLink) handleMoveLink(draggingLink, folderPath); }}
                               onClick={() => !isRenaming && setActiveFolder(folderPath)}
-                              style={{ display: 'flex', flexDirection: 'column', background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '10px', overflow: 'hidden', cursor: 'pointer', transition: 'border-color 0.15s' }}
+                              style={{ display: 'flex', flexDirection: 'column', background: dragOverFolder === folderPath ? 'rgba(59,130,246,0.08)' : '#111', border: `1px solid ${dragOverFolder === folderPath ? 'rgba(59,130,246,0.5)' : 'rgba(255,255,255,0.07)'}`, borderRadius: '10px', overflow: 'hidden', cursor: 'pointer', transition: 'border-color 0.15s' }}
                             >
                               <div style={{ height: '120px', background: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
@@ -2788,7 +2849,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const folderPath = `${activeFolder}/${sub}`;
                             const isRenaming = renamingFolderPath === folderPath;
                             return (
-                              <div key={sub} draggable={isEmployee || isAdmin} onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingFolder({ topFolder: activeFolder, sub }); }} onDragEnd={() => { setDraggingFolder(null); setDragOverFolder(null); }} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}>
+                              <div key={sub} draggable={isEmployee || isAdmin} onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingFolder({ topFolder: activeFolder, sub }); }} onDragEnd={() => { setDraggingFolder(null); setDragOverFolder(null); }} onDragOver={(e) => { if ((draggingDoc || draggingFolder || draggingLink) && folderPath !== `${draggingFolder?.topFolder}/${draggingFolder?.sub}`) { e.preventDefault(); setDragOverFolder(folderPath); } }} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); }} onDrop={(e) => { e.preventDefault(); setDragOverFolder(null); if (draggingDoc) handleMoveDoc(draggingDoc, folderPath); else if (draggingFolder && folderPath !== `${draggingFolder.topFolder}/${draggingFolder.sub}`) handleMoveFolder(draggingFolder, folderPath); else if (draggingLink) handleMoveLink(draggingLink, folderPath); }} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: dragOverFolder === folderPath ? 'rgba(59,130,246,0.12)' : 'rgba(255,255,255,0.02)', border: `1px solid ${dragOverFolder === folderPath ? 'rgba(59,130,246,0.5)' : 'rgba(255,255,255,0.05)'}`, borderRadius: '6px', cursor: 'pointer' }}>
                                 <div onClick={() => !isRenaming && setActiveFolder(folderPath)} style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                                   {isRenaming ? (
@@ -2962,7 +3023,11 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                           {filteredLinks.map(link => (
-                            <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}
+                            <div key={link.id}
+                              draggable={isEmployee || isAdmin}
+                              onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingLink(link); }}
+                              onDragEnd={() => { setDraggingLink(null); setDragOverFolder(null); }}
+                              style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}
                               onClick={() => openSafeLink(link.url)}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
@@ -2992,7 +3057,11 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     {docView === 'grid' && (
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '12px' }}>
                         {filteredLinks.map(link => (
-                          <div key={link.id} onClick={() => openSafeLink(link.url)}
+                          <div key={link.id}
+                            draggable={isEmployee || isAdmin}
+                            onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingLink(link); }}
+                            onDragEnd={() => { setDraggingLink(null); setDragOverFolder(null); }}
+                            onClick={() => openSafeLink(link.url)}
                             style={{ display: 'flex', flexDirection: 'column', background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '10px', overflow: 'hidden', cursor: 'pointer' }}>
                             <div style={{ height: '160px', background: '#1a1a1a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
