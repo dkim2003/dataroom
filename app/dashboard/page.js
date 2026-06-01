@@ -307,6 +307,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const [renamingPrivateItemId, setRenamingPrivateItemId] = useState(null);
                             const [renamePrivateItemValue, setRenamePrivateItemValue] = useState('');
                             const [privateItemMenuId, setPrivateItemMenuId] = useState(null);
+                            const [draggingPrivateFile, setDraggingPrivateFile] = useState(null);
+                            const [dragOverPrivateFolder, setDragOverPrivateFolder] = useState(null);
 
                             useEffect(() => {
                               async function init() {
@@ -882,6 +884,76 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               }
                             }
 
+
+                            async function handleMovePrivateFile(file, targetSubfolder) {
+                              const userId = selectedPrivateUserId || user.id;
+                              const newPath = targetSubfolder
+                                ? `private/${userId}/${targetSubfolder}/${file.name}`
+                                : `private/${userId}/${file.name}`;
+                              if (newPath === file.path) return;
+                              const { data: { session } } = await supabase.auth.getSession();
+                              taskStart('Moving...');
+                              const res = await fetch('/api/private-files', {
+                                method: 'PATCH',
+                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ path: file.path, newPath })
+                              });
+                              const result = await res.json();
+                              if (result.error) {
+                                taskDone(result.error === 'Destination already exists or upload failed' ? 'A file with that name already exists there' : 'Move failed', 'error');
+                              } else {
+                                taskDone('Moved');
+                                await loadPrivateFiles(selectedPrivateUserId, privateActiveSubfolder);
+                              }
+                            }
+
+                            async function handlePrivateFileToDocs(file, targetFolder) {
+                              const topTarget = targetFolder.split('/')[0];
+                              const hasInternal = folderPaths.some(fp => fp.startsWith('internal/') && fp.split('/')[1] === topTarget);
+                              const hasGeneral = folderPaths.some(fp => fp.startsWith('general/') && fp.split('/')[1] === topTarget);
+                              let targetPrefix;
+                              if (hasInternal) targetPrefix = 'internal';
+                              else if (hasGeneral) targetPrefix = 'general';
+                              else { taskDone('Move failed — target folder not found', 'error'); return; }
+                              const filename = file.path.split('/').pop();
+                              const newPath = `${targetPrefix}/${targetFolder}/${filename}`;
+                              const { data: { session } } = await supabase.auth.getSession();
+                              taskStart('Moving file...');
+                              const res = await fetch('/api/documents/move', {
+                                method: 'POST',
+                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ oldPath: file.path, newPath })
+                              });
+                              const result = await res.json();
+                              if (result.error) {
+                                taskDone(result.error === 'Destination already exists or upload failed' ? 'A file with that name already exists there' : 'Move failed', 'error');
+                              } else {
+                                taskDone('File moved');
+                                await Promise.all([loadDocuments(), loadPrivateFiles(selectedPrivateUserId, privateActiveSubfolder)]);
+                              }
+                            }
+
+                            async function handleDocToPrivate(doc, targetPrivateSubfolder) {
+                              const userId = selectedPrivateUserId || user.id;
+                              const filename = doc.path.split('/').pop();
+                              const newPath = targetPrivateSubfolder
+                                ? `private/${userId}/${targetPrivateSubfolder}/${filename}`
+                                : `private/${userId}/${filename}`;
+                              const { data: { session } } = await supabase.auth.getSession();
+                              taskStart('Moving file...');
+                              const res = await fetch('/api/documents/move', {
+                                method: 'POST',
+                                headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ oldPath: doc.path, newPath })
+                              });
+                              const result = await res.json();
+                              if (result.error) {
+                                taskDone(result.error === 'Destination already exists or upload failed' ? 'A file with that name already exists there' : 'Move failed', 'error');
+                              } else {
+                                taskDone('File moved');
+                                await Promise.all([loadDocuments(), loadPrivateFiles(selectedPrivateUserId, privateActiveSubfolder)]);
+                              }
+                            }
 
                             // Fix: reload from server after folder creation (not just optimistic)
                             async function createPrivateFolderFixed() {
@@ -1937,9 +2009,9 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                   <div key={subPath}>
                     <div
                       style={{ display: 'flex', alignItems: 'center', background: isSubDragOver ? 'rgba(59,130,246,0.12)' : subActive ? 'rgba(255,255,255,0.04)' : 'none', borderLeft: isSubDragOver ? '2px solid #3b82f6' : subActive ? '2px solid #3b82f6' : '2px solid transparent', transition: 'background 0.1s' }}
-                      onDragOver={(e) => { if (draggingDoc || draggingFolder || draggingLink) { e.preventDefault(); setDragOverFolder(subPath); } }}
+                      onDragOver={(e) => { if (draggingDoc || draggingFolder || draggingLink || draggingPrivateFile) { e.preventDefault(); setDragOverFolder(subPath); } }}
                       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); }}
-                      onDrop={(e) => { e.preventDefault(); setDragOverFolder(null); if (draggingDoc) handleMoveDoc(draggingDoc, subPath); if (draggingFolder) handleMoveFolder(draggingFolder, subPath); if (draggingLink) handleMoveLink(draggingLink, subPath); }}
+                      onDrop={(e) => { e.preventDefault(); setDragOverFolder(null); if (draggingDoc) handleMoveDoc(draggingDoc, subPath); if (draggingFolder) handleMoveFolder(draggingFolder, subPath); if (draggingLink) handleMoveLink(draggingLink, subPath); if (draggingPrivateFile) handlePrivateFileToDocs(draggingPrivateFile, subPath); }}
                     >
                       <button
                         onClick={() => { setActiveFolder(subPath); setActiveTab('documents'); }}
@@ -1986,7 +2058,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     onDragOver={(e) => {
                       e.preventDefault();
                       if (reorderingFolder && reorderingFolder !== folder) { setReorderDropTarget(folder); }
-                      else if (draggingDoc || draggingFolder || draggingLink) { setDragOverFolder(folder); }
+                      else if (draggingDoc || draggingFolder || draggingLink || draggingPrivateFile) { setDragOverFolder(folder); }
                     }}
                     onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) { setDragOverFolder(null); setReorderDropTarget(null); } }}
                     onDrop={(e) => {
@@ -2003,6 +2075,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                         if (draggingDoc) handleMoveDoc(draggingDoc, folder);
                         if (draggingFolder) handleMoveFolder(draggingFolder, folder);
                         if (draggingLink) handleMoveLink(draggingLink, folder);
+                        if (draggingPrivateFile) handlePrivateFileToDocs(draggingPrivateFile, folder);
                       }
                       setReorderingFolder(null); setReorderDropTarget(null);
                     }}
@@ -2088,11 +2161,22 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                 {/* Private workspace — employees and admin only */}
                 {(isEmployee || isAdmin) && (<>
                 <div style={{ margin: '16px 16px 6px', borderTop: '1px solid rgba(255,255,255,0.05)' }} />
-                <div style={{
-                  display: 'flex', alignItems: 'center',
-                  borderLeft: activeTab === 'private' && !privateActiveSubfolder ? '2px solid #a855f7' : '2px solid transparent',
-                  marginBottom: '6px',
-                }}>
+                <div
+                  onDragOver={(e) => { if (draggingDoc || draggingLink || draggingPrivateFile) { e.preventDefault(); setDragOverFolder('__private_root__'); } }}
+                  onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); }}
+                  onDrop={(e) => {
+                    e.preventDefault(); setDragOverFolder(null);
+                    if (draggingDoc) handleDocToPrivate(draggingDoc, null);
+                    else if (draggingLink) handleMoveLink(draggingLink, '__private__');
+                    else if (draggingPrivateFile) handleMovePrivateFile(draggingPrivateFile, null);
+                  }}
+                  style={{
+                    display: 'flex', alignItems: 'center',
+                    background: dragOverFolder === '__private_root__' ? 'rgba(168,85,247,0.12)' : 'none',
+                    borderLeft: dragOverFolder === '__private_root__' ? '2px solid #a855f7' : activeTab === 'private' && !privateActiveSubfolder ? '2px solid #a855f7' : '2px solid transparent',
+                    marginBottom: '6px',
+                  }}
+                >
                   {/* Label — switches to private tab */}
                   <button
                     onClick={() => { setActiveTab('private'); setActiveFolder(null); setPrivateActiveSubfolder(null); setPrivateOpen(true); loadPrivateFiles(null, null); loadPrivateItems(); }}
@@ -2119,7 +2203,17 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                       const indent = 32 + depth * 14;
                       return (
                         <div key={subPath}>
-                          <div style={{ display: 'flex', alignItems: 'center' }}>
+                          <div
+                            style={{ display: 'flex', alignItems: 'center', background: dragOverFolder === `__private_sidebar__${subPath}` ? 'rgba(168,85,247,0.12)' : 'none', borderLeft: dragOverFolder === `__private_sidebar__${subPath}` ? '2px solid #a855f7' : '2px solid transparent', transition: 'background 0.1s' }}
+                            onDragOver={(e) => { if (draggingDoc || draggingLink || draggingPrivateFile) { e.preventDefault(); setDragOverFolder(`__private_sidebar__${subPath}`); } }}
+                            onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); }}
+                            onDrop={(e) => {
+                              e.preventDefault(); setDragOverFolder(null);
+                              if (draggingDoc) handleDocToPrivate(draggingDoc, subPath);
+                              else if (draggingLink) handleMoveLink(draggingLink, `__private__/${subPath}`);
+                              else if (draggingPrivateFile) handleMovePrivateFile(draggingPrivateFile, subPath);
+                            }}
+                          >
                             <button
                               onClick={() => { setActiveTab('private'); setPrivateActiveSubfolder(subPath); setActiveFolder(null); loadPrivateFiles(selectedPrivateUserId, subPath); }}
                               onContextMenu={(e) => { e.preventDefault(); const zoom = 1.2; setContextMenu({ type: 'private-sub', sub: subPath, x: e.clientX / zoom, y: e.clientY / zoom }); }}
@@ -2127,8 +2221,8 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 flex: 1, display: 'flex', alignItems: 'center', gap: '8px',
                                 padding: `7px 16px 7px ${indent}px`,
                                 background: subActive ? 'rgba(255,255,255,0.04)' : 'none',
-                                border: 'none', borderLeft: subActive ? '2px solid #a855f7' : '2px solid transparent',
-                                color: subActive ? '#c084fc' : '#666',
+                                border: 'none', borderLeft: subActive ? '2px solid #a855f7' : dragOverFolder === `__private_sidebar__${subPath}` ? '2px solid #a855f7' : '2px solid transparent',
+                                color: subActive || dragOverFolder === `__private_sidebar__${subPath}` ? '#c084fc' : '#666',
                                 cursor: 'pointer', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', textAlign: 'left',
                                 transition: 'background 0.1s, color 0.1s',
                               }}
@@ -2455,6 +2549,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 {openMenuPath === link.id && (
                                   <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', right: 0, top: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
                                     <button onClick={() => { setOpenMenuPath(null); openSafeLink(link.url); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                    <button onClick={() => { setOpenMenuPath(null); setRenamingLinkId(link.id); setRenameLinkValue(link.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>
                                     <div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/>
                                     <button onClick={() => { setOpenMenuPath(null); if (confirm(`Remove link "${link.name}"?`)) deleteLink(link.id); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Remove</button>
                                   </div>
@@ -3042,6 +3137,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                     {openMenuPath === link.id && (
                                       <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', right: 0, top: '100%', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', zIndex: 50, minWidth: '160px', padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
                                         <button onClick={() => { setOpenMenuPath(null); openSafeLink(link.url); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Open</button>
+                                        <button onClick={() => { setOpenMenuPath(null); setRenamingLinkId(link.id); setRenameLinkValue(link.name); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ccc', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Rename</button>
                                         <div style={{ margin: '4px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}/>
                                         <button onClick={() => { setOpenMenuPath(null); if (confirm(`Remove link "${link.name}"?`)) deleteLink(link.id); }} style={{ width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', color: '#ef4444', fontSize: '13px', fontFamily: 'Exo 2, sans-serif', cursor: 'pointer' }}>Remove</button>
                                       </div>
@@ -3209,7 +3305,10 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                           <div
                             key={subPath}
                             onClick={() => { if (openFolderMenu === `__private_sub__${subPath}`) return; setPrivateActiveSubfolder(subPath); loadPrivateFiles(selectedPrivateUserId, subPath); }}
-                            style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: 'pointer' }}
+                            onDragOver={(e) => { if (draggingPrivateFile || draggingDoc || draggingLink) { e.preventDefault(); setDragOverPrivateFolder(subPath); } }}
+                            onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverPrivateFolder(null); }}
+                            onDrop={(e) => { e.preventDefault(); setDragOverPrivateFolder(null); if (draggingPrivateFile) handleMovePrivateFile(draggingPrivateFile, subPath); else if (draggingDoc) handleDocToPrivate(draggingDoc, subPath); else if (draggingLink) handleMoveLink(draggingLink, `__private__/${subPath}`); }}
+                            style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: dragOverPrivateFolder === subPath ? 'rgba(168,85,247,0.12)' : 'rgba(255,255,255,0.02)', border: `1px solid ${dragOverPrivateFolder === subPath ? 'rgba(168,85,247,0.5)' : 'rgba(255,255,255,0.05)'}`, borderRadius: '6px', cursor: 'pointer' }}
                           >
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
@@ -3260,7 +3359,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                     {privateDocView === 'grid' ? (
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(155px, 1fr))', gap: '10px' }}>
                         {privateFiles.map(file => (
-                          <div key={file.path} onClick={() => openDocument(file.path, file.name)} style={{ display: 'flex', flexDirection: 'column', background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '10px', overflow: 'hidden', cursor: 'pointer', transition: 'border-color 0.15s' }}>
+                          <div key={file.path} draggable={!selectedPrivateUserId} onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingPrivateFile(file); }} onDragEnd={() => { setDraggingPrivateFile(null); setDragOverPrivateFolder(null); }} onClick={() => openDocument(file.path, file.name)} style={{ display: 'flex', flexDirection: 'column', background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '10px', overflow: 'hidden', cursor: 'pointer', transition: 'border-color 0.15s' }}>
                             <div style={{ height: '90px', background: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                               <FileTypeIcon name={file.name} size={32} />
                             </div>
@@ -3275,7 +3374,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                       privateFiles.map(file => {
                         const isRenaming = renamingPrivateFilePath === file.path;
                         return (
-                          <div key={file.path} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px' }}>
+                          <div key={file.path} draggable={!selectedPrivateUserId && !isRenaming} onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingPrivateFile(file); }} onDragEnd={() => { setDraggingPrivateFile(null); setDragOverPrivateFolder(null); }} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, cursor: isRenaming ? 'default' : 'pointer' }} onClick={() => !isRenaming && openDocument(file.path, file.name)}>
                               <FileTypeIcon name={file.name} size={24} />
                               {isRenaming ? (
@@ -3310,10 +3409,11 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
               )}
               {privateFilesLoading && <p style={{ fontSize: '14px', color: '#555', fontFamily: 'Exo 2, sans-serif', marginBottom: '16px' }}>Loading files...</p>}
 
-              {/* Private links — from document_links with folder='__private__', only shown at root */}
-              {!privateActiveSubfolder && (() => {
+              {/* Private links — shown at root or in the matching private subfolder */}
+              {(() => {
                 const viewUserId = selectedPrivateUserId || user.id;
-                const privateLinks = links.filter(l => l.folder === '__private__' && (l.created_by === viewUserId || (isAdmin && !selectedPrivateUserId)));
+                const currentPrivateFolder = privateActiveSubfolder ? `__private__/${privateActiveSubfolder}` : '__private__';
+                const privateLinks = links.filter(l => l.folder === currentPrivateFolder && (l.created_by === viewUserId || (isAdmin && !selectedPrivateUserId)));
                 if (privateLinks.length === 0) return null;
                 return (
                   <div style={{ marginBottom: '20px' }}>
@@ -3322,7 +3422,11 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                       {privateLinks.map(link => {
                         const isRenaming = renamingLinkId === link.id;
                         return (
-                          <div key={link.id} style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: isRenaming ? 'default' : 'pointer' }} onClick={() => !isRenaming && openSafeLink(link.url)}>
+                          <div key={link.id}
+                            draggable={!selectedPrivateUserId && !isRenaming}
+                            onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingLink(link); }}
+                            onDragEnd={() => { setDraggingLink(null); setDragOverFolder(null); setDragOverPrivateFolder(null); }}
+                            style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', cursor: isRenaming ? 'default' : 'pointer' }} onClick={() => !isRenaming && openSafeLink(link.url)}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                               {isRenaming ? (
@@ -3354,7 +3458,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
               })()}
 
               {/* Empty state */}
-              {!privateFilesLoading && privateFiles.length === 0 && (privateSubfolderMap[privateActiveSubfolder || '']?.size ?? 0) === 0 && links.filter(l => l.folder === '__private__' && (l.created_by === (selectedPrivateUserId || user.id) || (isAdmin && !selectedPrivateUserId))).length === 0 && (
+              {!privateFilesLoading && privateFiles.length === 0 && (privateSubfolderMap[privateActiveSubfolder || '']?.size ?? 0) === 0 && links.filter(l => l.folder === (privateActiveSubfolder ? `__private__/${privateActiveSubfolder}` : '__private__') && (l.created_by === (selectedPrivateUserId || user.id) || (isAdmin && !selectedPrivateUserId))).length === 0 && (
                 <p style={{ fontSize: '14px', color: '#555', fontFamily: 'Exo 2, sans-serif' }}>
                   {selectedPrivateUserId ? 'No private files for this user.' : 'Nothing here yet. Upload a file, add a link, or create a folder.'}
                 </p>

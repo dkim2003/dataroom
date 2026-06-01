@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
-import { isSafeStoragePath, topLevelPrefix } from '@/lib/pathSafety'
+import { isSafeRelativePath, isSafeStoragePath, topLevelPrefix } from '@/lib/pathSafety'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -8,11 +8,12 @@ const supabase = createClient(
 )
 
 const ADMIN_EMAIL = 'contact@kimduhyun.com'
-// Moves are only allowed inside the general/restricted/internal prefixes.
-// private/ has its own rename endpoint (private-files PATCH) and trash/ is
-// managed by the trash endpoints. Cross-prefix moves are explicitly rejected
-// so an employee cannot move an internal doc into general/ (or vice-versa).
-const MOVE_ALLOWED_PREFIXES = ['general', 'restricted', 'internal']
+// Moves are allowed inside general/restricted/internal and across private/.
+// private/ is a special case outside the normal restriction hierarchy — moves
+// between private and general/internal are allowed in both directions, except
+// private → restricted which is blocked. trash/ is managed separately.
+const MOVE_ALLOWED_PREFIXES = ['general', 'restricted', 'internal', 'private']
+const RESTRICTION_LEVEL = { general: 0, restricted: 1, internal: 2 }
 
 // POST /api/documents/move
 // Body: { oldPath: string, newPath: string }
@@ -43,17 +44,35 @@ export async function POST(request) {
     }
     if (oldPath === newPath) return NextResponse.json({ success: true })
 
-    // Validate both paths are safe AND live under an allowed top-level prefix.
-    if (!isSafeStoragePath(oldPath, MOVE_ALLOWED_PREFIXES) || !isSafeStoragePath(newPath, MOVE_ALLOWED_PREFIXES)) {
+    // Validate both paths are safe and under an allowed top-level prefix.
+    if (!isSafeRelativePath(oldPath) || !isSafeRelativePath(newPath)) {
       return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
     }
-    // Prevent moves that would lower a file's restriction level (e.g. internal → general
-    // would expose employee-only files to investors). Escalating moves (general → internal,
-    // general → restricted) are allowed so admins/employees can re-classify documents.
-    const RESTRICTION_LEVEL = { general: 0, restricted: 1, internal: 2 }
     const oldPrefix = topLevelPrefix(oldPath)
     const newPrefix = topLevelPrefix(newPath)
-    if (oldPrefix !== newPrefix) {
+    if (!MOVE_ALLOWED_PREFIXES.includes(oldPrefix) || !MOVE_ALLOWED_PREFIXES.includes(newPrefix)) {
+      return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
+    }
+    // Ownership checks for private paths: only the owning user (or admin) may
+    // move files into or out of their own private/ prefix.
+    if (oldPrefix === 'private') {
+      const pathUserId = oldPath.split('/')[1]
+      if (pathUserId !== user.id && !isAdmin)
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+    if (newPrefix === 'private') {
+      const pathUserId = newPath.split('/')[1]
+      if (pathUserId !== user.id && !isAdmin)
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+    // Cross-prefix rules:
+    // • private → restricted is blocked (use general or internal instead).
+    // • Within general/restricted/internal, demotion moves are blocked.
+    // • All other moves involving private/ are allowed in either direction.
+    if (oldPrefix === 'private' && newPrefix === 'restricted') {
+      return NextResponse.json({ error: 'Cannot move a private file to restricted — use general or internal instead' }, { status: 400 })
+    }
+    if (oldPrefix !== 'private' && newPrefix !== 'private' && oldPrefix !== newPrefix) {
       if ((RESTRICTION_LEVEL[oldPrefix] ?? 0) > (RESTRICTION_LEVEL[newPrefix] ?? 0)) {
         return NextResponse.json({ error: 'Cannot move to a less restricted prefix' }, { status: 400 })
       }

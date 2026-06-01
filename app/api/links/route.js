@@ -40,8 +40,8 @@ export async function GET(request) {
     const internalFolderNames = new Set((internalFolderData || []).map(f => f.name))
 
     const filtered = data.filter(link => {
-      // Private-tab links: only visible to creator, or to admin
-      if (link.folder === '__private__') return link.created_by === user.id || isAdmin
+      // Private-tab links (root or in a private subfolder): only visible to creator or admin
+      if (link.folder === '__private__' || link.folder?.startsWith('__private__/')) return link.created_by === user.id || isAdmin
       // A link is internal if flagged OR if its top-level folder name exists under internal/ in storage
       const isLinkInternal = link.internal || internalFolderNames.has(link.folder.split('/')[0])
       if (isLinkInternal && !isEmployee && !isAdmin) return false
@@ -132,8 +132,11 @@ export async function PATCH(request) {
     //    else's note out of their private workspace.
     const isOwner = existing.created_by === user.id
     const isMoveOnly = name === undefined && folder !== undefined
-    const isPrivateLink = existing.folder === '__private__'
-    if (!isMoveOnly || isPrivateLink) {
+    const isPrivateLink = existing.folder === '__private__' || existing.folder?.startsWith('__private__/')
+    const isTargetPrivate = folder !== undefined && (folder === '__private__' || folder?.startsWith('__private__/'))
+    // Require owner or admin for: any rename, any move of a private link, or any
+    // move that targets private (to prevent other employees claiming a link as their own private item).
+    if (!isMoveOnly || isPrivateLink || isTargetPrivate) {
       if (!isOwner && !isAdmin) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
@@ -145,19 +148,26 @@ export async function PATCH(request) {
     if (folder !== undefined) {
       if (typeof folder !== 'string' || !folder.trim()) return NextResponse.json({ error: 'invalid folder' }, { status: 400 })
       const trimmedFolder = folder.trim()
-      if (trimmedFolder === '__private__') return NextResponse.json({ error: 'invalid folder' }, { status: 400 })
-      // Re-derive restricted/internal from storage so the client can't
-      // silently downgrade a link's visibility by moving it.
-      const topFolder = trimmedFolder.split('/')[0]
-      const [{ data: internalRoot }, { data: restrictedRoot }] = await Promise.all([
-        supabase.storage.from('documents').list('internal', { limit: 500 }),
-        supabase.storage.from('documents').list('restricted', { limit: 500 })
-      ])
-      const internalNames = new Set((internalRoot || []).map(f => f.name))
-      const restrictedNames = new Set((restrictedRoot || []).map(f => f.name))
-      updates.folder = trimmedFolder
-      updates.internal = internalNames.has(topFolder)
-      updates.restricted = restrictedNames.has(topFolder)
+      if (trimmedFolder === '__private__' || trimmedFolder.startsWith('__private__/')) {
+        // Moving to private root or private subfolder: no storage lookup needed,
+        // these links are only visible to the creator and admin.
+        updates.folder = trimmedFolder
+        updates.internal = false
+        updates.restricted = false
+      } else {
+        // Moving to a non-private folder: re-derive restricted/internal from storage
+        // so the client can't silently downgrade a link's visibility by moving it.
+        const topFolder = trimmedFolder.split('/')[0]
+        const [{ data: internalRoot }, { data: restrictedRoot }] = await Promise.all([
+          supabase.storage.from('documents').list('internal', { limit: 500 }),
+          supabase.storage.from('documents').list('restricted', { limit: 500 })
+        ])
+        const internalNames = new Set((internalRoot || []).map(f => f.name))
+        const restrictedNames = new Set((restrictedRoot || []).map(f => f.name))
+        updates.folder = trimmedFolder
+        updates.internal = internalNames.has(topFolder)
+        updates.restricted = restrictedNames.has(topFolder)
+      }
     }
 
     const { data, error } = await supabase.from('document_links').update(updates).eq('id', id).select().single()
