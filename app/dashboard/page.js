@@ -257,7 +257,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const [trashLoading, setTrashLoading] = useState(false);
                             const [creatingFolderIn, setCreatingFolderIn] = useState(null);
                             const [expandedFolders, setExpandedFolders] = useState(new Set());
-                            const [foldersGroupOpen, setFoldersGroupOpen] = useState(true);
+                            const [foldersGroupOpen, setFoldersGroupOpen] = useState(false);
                             const [internalGroupOpen, setInternalGroupOpen] = useState(true);
                             const [folderPaths, setFolderPaths] = useState([]);
                             const [newFolderName, setNewFolderName] = useState('');
@@ -308,6 +308,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const [renamePrivateItemValue, setRenamePrivateItemValue] = useState('');
                             const [privateItemMenuId, setPrivateItemMenuId] = useState(null);
                             const [draggingPrivateFile, setDraggingPrivateFile] = useState(null);
+                            const [draggingPrivateFolder, setDraggingPrivateFolder] = useState(null);
                             const [dragOverPrivateFolder, setDragOverPrivateFolder] = useState(null);
 
                             useEffect(() => {
@@ -905,6 +906,58 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                 taskDone('Moved');
                                 await loadPrivateFiles(selectedPrivateUserId, privateActiveSubfolder);
                               }
+                            }
+
+                            async function handleMovePrivateSubfolder(sourceSub, targetParentSub) {
+                              const sourceName = sourceSub.split('/').pop();
+                              const newSubPath = targetParentSub ? `${targetParentSub}/${sourceName}` : sourceName;
+                              // Guard: no-op if same path, or target is inside the dragged folder itself
+                              if (newSubPath === sourceSub || newSubPath.startsWith(sourceSub + '/')) return;
+                              taskStart('Moving folder...');
+                              const { data: { session } } = await supabase.auth.getSession();
+                              const userId = selectedPrivateUserId || user.id;
+                              // Collect sourceSub + all nested sub-paths
+                              const treeParams = new URLSearchParams();
+                              if (selectedPrivateUserId) treeParams.set('userId', selectedPrivateUserId);
+                              treeParams.set('recursive', 'true');
+                              const treeRes = await fetch(`/api/private-files?${treeParams}`, { headers: { authorization: `Bearer ${session.access_token}` } });
+                              const treeResult = await treeRes.json();
+                              const allFolderPaths = [sourceSub, ...(treeResult.folderPaths || []).filter(fp => fp.startsWith(sourceSub + '/'))];
+                              for (const folderPath of allFolderPaths) {
+                                const params = new URLSearchParams();
+                                if (selectedPrivateUserId) params.set('userId', selectedPrivateUserId);
+                                params.set('subfolder', folderPath);
+                                const filesRes = await fetch(`/api/private-files?${params}`, { headers: { authorization: `Bearer ${session.access_token}` } });
+                                const filesResult = await filesRes.json();
+                                for (const f of (filesResult.files || [])) {
+                                  const relFolder = f.path.split('/').slice(2, -1).join('/');
+                                  const newRelFolder = newSubPath + relFolder.slice(sourceSub.length);
+                                  const newFilePath = `private/${userId}/${newRelFolder}/${f.path.split('/').pop()}`;
+                                  await fetch('/api/private-files', {
+                                    method: 'PATCH',
+                                    headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ path: f.path, newPath: newFilePath })
+                                  });
+                                }
+                                const newFolderPath = newSubPath + folderPath.slice(sourceSub.length);
+                                await fetch('/api/private-files', {
+                                  method: 'POST',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ folderName: newFolderPath, userId: selectedPrivateUserId || undefined })
+                                });
+                                await fetch('/api/private-files', {
+                                  method: 'DELETE',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ path: `private/${userId}/${folderPath}/.keep` })
+                                });
+                              }
+                              const newActiveSubfolder = (privateActiveSubfolder === sourceSub || privateActiveSubfolder?.startsWith(sourceSub + '/'))
+                                ? newSubPath + (privateActiveSubfolder || '').slice(sourceSub.length)
+                                : privateActiveSubfolder;
+                              if (newActiveSubfolder !== privateActiveSubfolder) setPrivateActiveSubfolder(newActiveSubfolder);
+                              await loadPrivateFolderTree(selectedPrivateUserId);
+                              await loadPrivateFiles(selectedPrivateUserId, newActiveSubfolder);
+                              taskDone('Folder moved');
                             }
 
                             async function handlePrivateFileToDocs(file, targetFolder) {
@@ -1739,8 +1792,16 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                     body: JSON.stringify({ keepPath: `${prefix}/${oldFullPath}/.keep` })
                                   });
                                 }
-                                // Create new .keep — infer prefix from the first matched file, or default to 'general'
-                                const inferredPrefix = folderDocs[0]?.path.split('/')[0] || 'general';
+                                // Infer prefix: first from a matched file, then from any sibling
+                                // path under the same top-level folder in prevFolderPaths.
+                                // Defaulting to 'general' only as a last resort prevents an empty
+                                // internal/restricted subfolder from getting its .keep misplaced.
+                                const inferredPrefix = folderDocs[0]?.path.split('/')[0]
+                                  || prevFolderPaths.find(fp => {
+                                      const noPrefix = fp.split('/').slice(1).join('/');
+                                      return noPrefix === topFolder || noPrefix.startsWith(topFolder + '/');
+                                    })?.split('/')[0]
+                                  || 'general';
                                 const isRestricted = inferredPrefix === 'restricted';
                                 const isInternal = inferredPrefix === 'internal';
                                 await fetch('/api/folders', {
@@ -1748,6 +1809,21 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                                   headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
                                   body: JSON.stringify({ folderPath: newFullPath, isRestricted, isInternal, skipLog: true })
                                 });
+                              }
+                              // Update any links whose folder field references the old subfolder path.
+                              // Without this, links remain orphaned at the old path after a rename.
+                              const affectedLinks = links.filter(l => l.folder === oldFullPath || l.folder.startsWith(oldFullPath + '/'));
+                              for (const link of affectedLinks) {
+                                const newLinkFolder = newFullPath + link.folder.slice(oldFullPath.length);
+                                const res = await fetch('/api/links', {
+                                  method: 'PATCH',
+                                  headers: { authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ id: link.id, folder: newLinkFolder })
+                                });
+                                const result = await res.json();
+                                if (result.link) {
+                                  setLinks(prev => prev.map(l => l.id === link.id ? result.link : l));
+                                }
                               }
                               // Emit one folder_renamed summary for the whole bulk rename.
                               await fetch('/api/activity/log', {
@@ -2162,11 +2238,12 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                 {(isEmployee || isAdmin) && (<>
                 <div style={{ margin: '16px 16px 6px', borderTop: '1px solid rgba(255,255,255,0.05)' }} />
                 <div
-                  onDragOver={(e) => { if (draggingDoc || draggingLink || draggingPrivateFile) { e.preventDefault(); setDragOverFolder('__private_root__'); } }}
+                  onDragOver={(e) => { if (draggingDoc || draggingLink || draggingPrivateFile || draggingPrivateFolder) { e.preventDefault(); setDragOverFolder('__private_root__'); } }}
                   onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); }}
                   onDrop={(e) => {
                     e.preventDefault(); setDragOverFolder(null);
-                    if (draggingDoc) handleDocToPrivate(draggingDoc, null);
+                    if (draggingPrivateFolder) handleMovePrivateSubfolder(draggingPrivateFolder, null);
+                    else if (draggingDoc) handleDocToPrivate(draggingDoc, null);
                     else if (draggingLink) handleMoveLink(draggingLink, '__private__');
                     else if (draggingPrivateFile) handleMovePrivateFile(draggingPrivateFile, null);
                   }}
@@ -2205,11 +2282,13 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                         <div key={subPath}>
                           <div
                             style={{ display: 'flex', alignItems: 'center', background: dragOverFolder === `__private_sidebar__${subPath}` ? 'rgba(168,85,247,0.12)' : 'none', borderLeft: dragOverFolder === `__private_sidebar__${subPath}` ? '2px solid #a855f7' : '2px solid transparent', transition: 'background 0.1s' }}
-                            onDragOver={(e) => { if (draggingDoc || draggingLink || draggingPrivateFile) { e.preventDefault(); setDragOverFolder(`__private_sidebar__${subPath}`); } }}
+                            onDragOver={(e) => { const canFolder = draggingPrivateFolder && draggingPrivateFolder !== subPath && !subPath.startsWith(draggingPrivateFolder + '/'); if (canFolder || draggingDoc || draggingLink || draggingPrivateFile) { e.preventDefault(); setDragOverFolder(`__private_sidebar__${subPath}`); } }}
                             onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); }}
                             onDrop={(e) => {
                               e.preventDefault(); setDragOverFolder(null);
-                              if (draggingDoc) handleDocToPrivate(draggingDoc, subPath);
+                              const canFolder = draggingPrivateFolder && draggingPrivateFolder !== subPath && !subPath.startsWith(draggingPrivateFolder + '/');
+                              if (canFolder) handleMovePrivateSubfolder(draggingPrivateFolder, subPath);
+                              else if (draggingDoc) handleDocToPrivate(draggingDoc, subPath);
                               else if (draggingLink) handleMoveLink(draggingLink, `__private__/${subPath}`);
                               else if (draggingPrivateFile) handleMovePrivateFile(draggingPrivateFile, subPath);
                             }}
@@ -3304,10 +3383,13 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                         return (
                           <div
                             key={subPath}
+                            draggable={!selectedPrivateUserId}
+                            onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingPrivateFolder(subPath); }}
+                            onDragEnd={() => { setDraggingPrivateFolder(null); setDragOverPrivateFolder(null); }}
                             onClick={() => { if (openFolderMenu === `__private_sub__${subPath}`) return; setPrivateActiveSubfolder(subPath); loadPrivateFiles(selectedPrivateUserId, subPath); }}
-                            onDragOver={(e) => { if (draggingPrivateFile || draggingDoc || draggingLink) { e.preventDefault(); setDragOverPrivateFolder(subPath); } }}
+                            onDragOver={(e) => { const canFolder = draggingPrivateFolder && draggingPrivateFolder !== subPath && !subPath.startsWith(draggingPrivateFolder + '/'); if (canFolder || draggingPrivateFile || draggingDoc || draggingLink) { e.preventDefault(); setDragOverPrivateFolder(subPath); } }}
                             onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverPrivateFolder(null); }}
-                            onDrop={(e) => { e.preventDefault(); setDragOverPrivateFolder(null); if (draggingPrivateFile) handleMovePrivateFile(draggingPrivateFile, subPath); else if (draggingDoc) handleDocToPrivate(draggingDoc, subPath); else if (draggingLink) handleMoveLink(draggingLink, `__private__/${subPath}`); }}
+                            onDrop={(e) => { e.preventDefault(); setDragOverPrivateFolder(null); const canFolder = draggingPrivateFolder && draggingPrivateFolder !== subPath && !subPath.startsWith(draggingPrivateFolder + '/'); if (canFolder) handleMovePrivateSubfolder(draggingPrivateFolder, subPath); else if (draggingPrivateFile) handleMovePrivateFile(draggingPrivateFile, subPath); else if (draggingDoc) handleDocToPrivate(draggingDoc, subPath); else if (draggingLink) handleMoveLink(draggingLink, `__private__/${subPath}`); }}
                             style={{ display: 'grid', gridTemplateColumns: '1fr 180px 150px 40px', alignItems: 'center', padding: '11px 18px', background: dragOverPrivateFolder === subPath ? 'rgba(168,85,247,0.12)' : 'rgba(255,255,255,0.02)', border: `1px solid ${dragOverPrivateFolder === subPath ? 'rgba(168,85,247,0.5)' : 'rgba(255,255,255,0.05)'}`, borderRadius: '6px', cursor: 'pointer' }}
                           >
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
