@@ -16,7 +16,6 @@ const INVESTOR_TUTORIAL_STEPS = [
   { target: 'doc-library', title: 'Document Library', description: 'Click any file to open it. Switch between list and grid view using the toggle in the top-right — grid mode shows PDF previews.' },
   { target: 'view-toggle', title: 'List & Grid View', description: 'Toggle between list and grid layouts. Grid view renders live PDF thumbnails so you can visually scan documents at a glance.' },
   { target: 'sol-panel', title: 'Sol AI Assistant', description: 'Ask Sol anything about Space Launch Technologies — financials, technology, the OLAC system, or any document in the data room.' },
-  { target: 'pitchdeck-tab', title: 'Pitch Deck', description: 'View the Space Launch Technologies pitch deck directly from this tab.' },
 ];
 
 const EMPLOYEE_TUTORIAL_STEPS = [
@@ -25,7 +24,6 @@ const EMPLOYEE_TUTORIAL_STEPS = [
   { target: 'folders', title: 'Drag & Drop', description: 'Drag any file or subfolder from the main area onto a sidebar folder to move it. You can also create new subfolders with the blue New Folder button.' },
   { target: 'trash-nav', title: 'Recently Deleted', description: 'Deleted files land here — not gone forever. Restore them or permanently delete from this view.' },
   { target: 'sol-panel', title: 'Sol AI Assistant', description: 'Ask Sol to find, summarise, or compare documents. Sol also auto-checks due diligence items when matching files are uploaded.' },
-  { target: 'diligence-tab', title: 'Due Diligence', description: 'Track the investor checklist here. Items are checked automatically as documents are uploaded and sorted.' },
 ];
 
 // Open a user-supplied URL safely. Rejects javascript:, data:, vbscript:, file:
@@ -209,6 +207,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                             const [docsLoading, setDocsLoading] = useState(true);
                             const [activeFolder, setActiveFolder] = useState(null);
                             const [solDrawerOpen, setSolDrawerOpen] = useState(false);
+                            const [solPanelOpen, setSolPanelOpen] = useState(true);
                             const [uploadFile, setUploadFile] = useState(null);
                             const [uploadFolder, setUploadFolder] = useState('');
                             const [uploadRestricted, setUploadRestricted] = useState(false);
@@ -313,25 +312,43 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
 
                             useEffect(() => {
                               async function init() {
-                                // Detect magic link arrival via URL hash — mark email as verified
-                                if (typeof window !== 'undefined' && window.location.hash.includes('type=magiclink')) {
-                                  const { data: { session } } = await supabase.auth.getSession();
-                                  if (session) {
-                                    await fetch('/api/verify-email', { method: 'POST', headers: { authorization: `Bearer ${session.access_token}` } });
-                                  }
-                                  // Clean up hash from URL
-                                  window.history.replaceState(null, '', window.location.pathname);
-                                }
-
                                 const { data: { user } } = await supabase.auth.getUser();
                                 if (!user) { router.push('/login'); return; }
-                                const { data: profile } = await supabase
+                                let { data: profile } = await supabase
                                 .from('profiles').select('*').eq('id', user.id).single();
                                 if (!profile || profile.status === 'pending' || profile.status === 'rejected') {
                                   await supabase.auth.signOut();
                                   router.push('/login');
                                   return;
                                 }
+
+                                // Self-heal email verification. If the profile isn't marked
+                                // verified yet but Supabase has confirmed the email (e.g. the user
+                                // just clicked the approval magic link), verify it now — regardless
+                                // of any URL hash. This closes the race where supabase-js consumes
+                                // and strips the magic-link hash before this effect can read it,
+                                // which previously left approved users permanently unable to log in.
+                                if (!profile.email_verified) {
+                                  if (user.email_confirmed_at) {
+                                    const { data: { session } } = await supabase.auth.getSession();
+                                    if (session) {
+                                      const res = await fetch('/api/verify-email', { method: 'POST', headers: { authorization: `Bearer ${session.access_token}` } });
+                                      if (res.ok) {
+                                        const { data: refreshed } = await supabase
+                                          .from('profiles').select('*').eq('id', user.id).single();
+                                        if (refreshed) profile = refreshed;
+                                      }
+                                    }
+                                  }
+                                  // Still unverified means Supabase has not confirmed the email —
+                                  // block access and send them back to login with a clear message.
+                                  if (!profile.email_verified) {
+                                    await supabase.auth.signOut();
+                                    router.push('/login?notice=confirm_email');
+                                    return;
+                                  }
+                                }
+
                                 setUser(user);
                                 setProfile(profile);
                                 await loadDocuments();
@@ -388,6 +405,17 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
                               document.addEventListener('click', close);
                               return () => document.removeEventListener('click', close);
                             }, [privateItemMenuId]);
+
+                            // Sol AI, Due Diligence, and Pitch Deck tabs are admin-only. If a
+                            // non-admin somehow lands on one of them, fall back to Documents so we
+                            // never show a tab whose nav item no longer exists.
+                            useEffect(() => {
+                              if (!profile) return;
+                              const adminCheck = user?.email === ADMIN_EMAIL || profile.is_admin === true;
+                              if (!adminCheck && (activeTab === 'sol' || activeTab === 'diligence' || activeTab === 'pitchdeck')) {
+                                setActiveTab('documents');
+                              }
+                            }, [profile, user, activeTab]);
 
 
                             async function renderPdfThumbnail(url, path) {
@@ -2016,11 +2044,15 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
       <div className="show-mobile" style={{ display: 'none', background: '#0a0a0a', borderBottom: '1px solid rgba(255,255,255,0.06)', overflowX: 'auto', flexShrink: 0 }}>
         <div style={{ display: 'flex', padding: '0 16px' }}>
           {[
+            { id: 'guide', label: 'Guide' },
             { id: 'documents', label: 'Documents' },
-            { id: 'sol', label: 'Sol AI' },
-            { id: 'diligence', label: 'Due Diligence' },
-            { id: 'pitchdeck', label: 'Pitch Deck' },
-            ...(isAdmin ? [{ id: 'investors', label: 'Investors' }, { id: 'activity', label: 'Activity' }] : [])
+            ...(isAdmin ? [
+              { id: 'sol', label: 'Sol AI' },
+              { id: 'diligence', label: 'Due Diligence' },
+              { id: 'pitchdeck', label: 'Pitch Deck' },
+              { id: 'investors', label: 'Investors' },
+              { id: 'activity', label: 'Activity' }
+            ] : [])
           ].map(item => (
             <button
               key={item.id}
@@ -2034,7 +2066,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
       </div>
 
       {/* Main layout */}
-      <div className="main-layout" style={{ flex: 1, display: 'grid', gridTemplateColumns: activeTab === 'sol' ? '220px 1fr' : '220px 1fr 280px', overflow: 'hidden', height: 'calc(100vh - 56px)' }}>
+      <div className="main-layout" style={{ flex: 1, display: 'grid', gridTemplateColumns: activeTab === 'sol' ? '220px 1fr' : (!isAdmin && !solPanelOpen) ? '220px 1fr 40px' : '220px 1fr 280px', overflow: 'hidden', height: 'calc(100vh - 56px)' }}>
 
         {/* Left sidebar */}
         <div className="sidebar" style={{ background: '#0a0a0a', borderRight: '1px solid rgba(255,255,255,0.06)', padding: '24px 0', overflowY: 'auto' }}>
@@ -2042,11 +2074,12 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
             <p style={{ fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.1em', marginBottom: '8px' }}>NAVIGATION</p>
           </div>
           {[
+            { id: 'guide', label: 'Guide', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 9v12"/></svg> },
             { id: 'documents', label: 'Documents', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> },
-            { id: 'sol', label: 'Sol AI', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> },
-            { id: 'diligence', label: 'Due Diligence', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> },
-            { id: 'pitchdeck', label: 'Pitch Deck', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg> },
             ...(isAdmin ? [
+              { id: 'sol', label: 'Sol AI', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> },
+              { id: 'diligence', label: 'Due Diligence', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> },
+              { id: 'pitchdeck', label: 'Pitch Deck', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg> },
               { id: 'investors', label: 'Investors', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
               { id: 'activity', label: 'Activity', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> }
             ] : [])
@@ -3702,6 +3735,113 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
             </div>
           )}
 
+          {/* Guide */}
+          {activeTab === 'guide' && (() => {
+            const GUIDE_DATA = [
+              { section: '0 — START HERE', rows: [
+                { id: '0.1', name: 'Executive Summary', status: 'In Progress' },
+                { id: '0.2', name: 'Data Room Navigation Guide', status: 'In Progress' },
+              ]},
+              { section: '1 — COMPANY OVERVIEW', rows: [
+                { id: '1.1', name: 'Executive Summary', status: 'In Progress', comment: 'Same as 0.1' },
+                { id: '1.2', name: 'Pitch Deck', status: 'In Progress' },
+                { id: '1.3', name: 'Pitch Deck Video Walkthrough', status: 'In Progress' },
+                { id: '1.4', name: 'Corporate Docs', status: 'In Progress' },
+                { id: '1.5', name: 'Team', status: 'In Progress' },
+              ]},
+              { section: '2 — PRODUCT & TECH', rows: [
+                { id: '2.1', name: 'Technology Platform Overview', status: 'In Progress' },
+                { id: '2.2', name: 'Product Portfolio', status: 'In Progress' },
+                { id: '2.3', name: 'Tech & IP Playbook', status: 'In Progress' },
+                { id: '2.4', name: 'Manufacturing & Scaling', status: 'In Progress' },
+                { id: '2.5', name: 'Product Performance', status: 'In Progress', comment: 'Requires additional data from planned experiments' },
+              ]},
+              { section: '3 — MARKET & BUSINESS MODEL', rows: [
+                { id: '3.1', name: 'Market Analysis', status: 'In Progress' },
+                { id: '3.2', name: 'Competitive Analysis', status: 'In Progress' },
+                { id: '3.3', name: 'Customer Discovery - Key Findings', status: 'In Progress' },
+                { id: '3.4', name: 'Go-to-Market Strategy', status: 'In Progress' },
+                { id: '3.5', name: 'Customer Business Case', status: 'In Progress', comment: 'Assumption-based ROI; pilot feedback in 2026 will be incorporated' },
+              ]},
+              { section: '4 — TRACTION & VALIDATION', rows: [
+                { id: '4.1', name: 'Customer Pipeline', status: 'In Progress', comment: 'Ongoing updates' },
+                { id: '4.2', name: 'Strategic Partnerships', status: 'In Progress', comment: 'Ongoing updates' },
+                { id: '4.3', name: 'Industry Recognition', status: 'In Progress', comment: 'Requires a few updates' },
+                { id: '4.4', name: 'Pilot Results / Testimonials', status: 'In Progress', comment: 'Planned for 2026' },
+                { id: '4.5', name: 'Regulatory Progress', status: 'In Progress', comment: 'Planned for 2026' },
+              ]},
+              { section: '5 — FINANCIAL INFORMATION', rows: [
+                { id: '5.1', name: 'Financial Model - 5 yr Forecast', status: 'In Progress' },
+                { id: '5.2', name: 'Historical Financials', status: 'In Progress' },
+                { id: '5.3', name: 'Use of Funds', status: 'In Progress' },
+                { id: '5.4', name: 'Funding History', status: 'In Progress' },
+                { id: '5.5', name: 'Cap Table', status: 'In Progress' },
+                { id: '5.6a', name: 'SAFE', status: 'In Progress', comment: 'Available upon request' },
+                { id: '5.6b', name: 'EBC SAFE', status: 'In Progress', comment: 'Available upon request' },
+              ]},
+              { section: '6 — INVESTMENT OPPORTUNITY', rows: [
+                { id: '6.1', name: 'Investment Overview', status: 'In Progress' },
+                { id: '6.2', name: 'Investor FAQs', status: 'In Progress' },
+                { id: '6.3', name: 'Risk Factors & Mitigation', status: 'In Progress' },
+                { id: '6.4', name: 'Exit Strategy', status: 'In Progress' },
+              ]},
+              { section: '7 — IMPACT', rows: [
+                { id: '7.1', name: 'Sustainability Metrics', status: 'In Progress' },
+                { id: '7.2', name: 'Theory of Change', status: 'In Progress' },
+                { id: '7.3', name: 'Logic Model', status: 'In Progress' },
+                { id: '7.4', name: 'Impact Roadmap', status: 'In Progress' },
+                { id: '7.5', name: 'Life Cycle Assessment', status: 'In Progress', comment: 'Planned for 2026' },
+              ]},
+            ];
+            const statusStyle = (s) => s === 'Yes'
+              ? { bg: 'rgba(34,197,94,0.12)', color: '#22c55e' }
+              : s === 'In Progress'
+              ? { bg: 'rgba(251,146,60,0.12)', color: '#fb923c' }
+              : { bg: 'rgba(255,255,255,0.05)', color: '#555' };
+            return (
+              <div>
+                <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.05em', marginBottom: '6px' }}>DATA ROOM NAVIGATION GUIDE</h1>
+                <p style={{ fontSize: '14px', color: '#777', marginBottom: '28px' }}>A complete index of all documents in this data room and their current status.</p>
+                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', overflow: 'hidden' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr>
+                        <th style={{ width: '190px', textAlign: 'left', padding: '10px 18px', fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em', borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.03)' }}>KEY AREA</th>
+                        <th style={{ textAlign: 'left', padding: '10px 18px', fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em', borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.03)' }}>DOCUMENT</th>
+                        <th style={{ width: '130px', textAlign: 'left', padding: '10px 18px', fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em', borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.03)' }}>STATUS</th>
+                        <th style={{ textAlign: 'left', padding: '10px 18px', fontSize: '11px', fontWeight: '600', color: '#555', fontFamily: 'Exo 2, sans-serif', letterSpacing: '0.08em', borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.03)' }}>COMMENTS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {GUIDE_DATA.map(section => section.rows.map((row, rowIdx) => {
+                        const st = statusStyle(row.status);
+                        const isFirstRow = rowIdx === 0;
+                        return (
+                          <tr key={`${section.section}-${row.id}`}>
+                            {isFirstRow && (
+                              <td rowSpan={section.rows.length} style={{ width: '190px', padding: '12px 18px', verticalAlign: 'middle', borderTop: '1px solid rgba(255,255,255,0.1)', borderRight: '1px solid rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.05)', fontFamily: 'Exo 2, sans-serif', fontSize: '12px', fontWeight: '600', color: '#ccc', letterSpacing: '0.04em', lineHeight: '1.5', background: 'rgba(255,255,255,0.01)' }}>
+                                {section.section}
+                              </td>
+                            )}
+                            <td style={{ padding: '11px 18px', borderBottom: '1px solid rgba(255,255,255,0.04)', borderTop: isFirstRow ? '1px solid rgba(255,255,255,0.1)' : 'none', fontFamily: 'Exo 2, sans-serif', fontSize: '14px', color: '#aaa' }}>
+                              <span style={{ fontSize: '12px', color: '#444', marginRight: '8px' }}>{row.id}</span>{row.name}
+                            </td>
+                            <td style={{ padding: '11px 18px', borderBottom: '1px solid rgba(255,255,255,0.04)', borderTop: isFirstRow ? '1px solid rgba(255,255,255,0.1)' : 'none' }}>
+                              <span style={{ fontSize: '12px', fontWeight: '500', padding: '3px 8px', borderRadius: '4px', background: st.bg, color: st.color, fontFamily: 'Exo 2, sans-serif', whiteSpace: 'nowrap' }}>{row.status}</span>
+                            </td>
+                            <td style={{ padding: '11px 18px', borderBottom: '1px solid rgba(255,255,255,0.04)', borderTop: isFirstRow ? '1px solid rgba(255,255,255,0.1)' : 'none', fontFamily: 'Exo 2, sans-serif', fontSize: '13px', color: '#555', lineHeight: '1.5' }}>
+                              {row.comment || null}
+                            </td>
+                          </tr>
+                        );
+                      }))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Investors — admin */}
           {activeTab === 'investors' && isAdmin && (
             <div>
@@ -3849,6 +3989,7 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
         </div>
 
         {activeTab !== 'sol' && (
+  isAdmin ? (
   <div data-tutorial="sol-panel" className="sol-panel" style={{ borderLeft: '1px solid rgba(255,255,255,0.06)', background: '#0a0a0a', display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
     <SolChat
   solMessages={solMessages}
@@ -3859,6 +4000,31 @@ function SolChat({ solMessages, solInput, solLoading, setSolInput, sendSolMessag
   taskToast={taskToast}
 />
   </div>
+  ) : solPanelOpen ? (
+  <div data-tutorial="sol-panel" className="sol-panel" style={{ borderLeft: '1px solid rgba(255,255,255,0.06)', background: '#0a0a0a', display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '8px 8px 0', flexShrink: 0 }}>
+      <button onClick={() => setSolPanelOpen(false)} title="Collapse panel" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#888', padding: '4px', display: 'flex', alignItems: 'center' }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+    </div>
+    <div style={{ flex: 1, minHeight: 0 }}>
+      <SolChat
+    solMessages={solMessages}
+    solInput={solInput}
+    solLoading={solLoading}
+    setSolInput={setSolInput}
+    sendSolMessage={sendSolMessage}
+    taskToast={taskToast}
+  />
+    </div>
+  </div>
+  ) : (
+  <div className="sol-panel" style={{ borderLeft: '1px solid rgba(255,255,255,0.06)', background: '#0a0a0a', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', overflow: 'hidden' }}>
+    <button onClick={() => setSolPanelOpen(true)} title="Expand panel" style={{ width: '100%', padding: '16px 0', background: 'none', border: 'none', cursor: 'pointer', color: '#888', display: 'flex', justifyContent: 'center' }}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+  </div>
+  )
 )}
 
       </div>

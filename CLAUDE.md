@@ -41,7 +41,7 @@ app/
   api/documents/signed-url/route.js     — Temporary download/view URLs (60s expiry); returns { requiresNda: true } for restricted docs
   api/documents/preview-urls/route.js   — Batch signed URLs for grid view thumbnails (POST, array of paths)
   api/documents/download/route.js       — Streams file bytes for direct download (avoids browser redirect to signed URL)
-  api/documents/move/route.js           — Move/rename docs (download → re-upload → delete); same-prefix only, path-validated
+  api/documents/move/route.js           — Move/rename docs (download → re-upload → delete); supports general/restricted/internal/private paths; cross-prefix moves allowed except private→restricted; ownership check on private paths
   api/upload/route.js                   — File upload to Supabase Storage (admin + employees); path-validated, 100 MB limit, blocks pending users
   api/sort/route.js                     — AI auto-sort: reads PDF with Claude, returns folder + isRestricted + diligenceChecked; rate-limited
   api/sort-link/route.js                — AI auto-sort for links: returns folder + isRestricted; rate-limited, employee/admin only
@@ -64,7 +64,7 @@ app/
   api/admin/approve/route.js            — POST: approve pending user, send magic-link email. Looks up email/name from DB (not body). HTML-escapes fullName.
   api/private/route.js                  — CRUD for private_items table (notes/items); scoped to user.id via RLS
   api/private-files/route.js            — GET/POST/PATCH/DELETE for private Storage files; path-validated, confined to private/{userId}/
-  api/links/route.js                    — CRUD for document_links; URL-validated (http(s) only); PATCH rename = owner-or-admin; PATCH folder move = any employee/admin (private links: owner-or-admin); DELETE = owner-or-admin
+  api/links/route.js                    — CRUD for document_links; URL-validated (http(s) only); PATCH rename = owner-or-admin; PATCH folder move = any employee/admin (private links or move-to-private: owner-or-admin); supports folder='__private__' and folder='__private__/subPath' for private tab links; DELETE = owner-or-admin
   api/re-request-access/route.js        — POST: re-request access after rejection
 lib/
   docusign.js                           — Shared DocuSign JWT / envelope helpers: getAccessToken, getAccountInfo, getEnvelopeStatus
@@ -99,7 +99,7 @@ Documents live in Supabase Storage (`documents` bucket) under four path prefixes
 - `general/` — visible to all approved users
 - `restricted/` — visible to `post_nda_*` and admin only; file names visible to pre-NDA users (so they see what's behind the NDA gate) but not openable/downloadable
 - `internal/` — visible to employees and admin only (not investors)
-- `private/{userId}/` — visible only to the owning user and admin
+- `private/{userId}/` — visible only to the owning user and admin; files can be moved cross-prefix to/from general/internal via `/api/documents/move`
 - `trash/{trashId}/` — managed by trash endpoints, not directly accessible
 
 Path format: `{prefix}/{folder}/{subfolder}/{filename}` (subfolder is optional). All user-supplied path segments are validated via `lib/pathSafety.js` to prevent traversal (`..`), null bytes, and cross-prefix escape.
@@ -133,7 +133,9 @@ The `documents` API returns both `documents` (files) and `folderPaths` (all fold
 
 **Folder display names:** `/api/folder-names` GET is accessible to any authenticated user so investors see the same display-name overrides as admins/employees. Write operations (POST/DELETE) remain admin/employee only.
 
-**Move prefix detection:** `handleMoveDoc` and `handleMoveFolder` explicitly check all three storage prefixes (internal > restricted > general) and refuse the move with an error if the target folder is not found in any prefix. No silent fallback to `general/`. This prevents files being silently routed to the wrong access tier during drag-and-drop.
+**Move prefix detection:** `handleMoveDoc` and `handleMoveFolder` explicitly check all three storage prefixes (internal > restricted > general) and refuse the move with an error if the target folder is not found in any prefix. No silent fallback to `general/`. This prevents files being silently routed to the wrong access tier during drag-and-drop. Cross-prefix moves involving `private/` use `handlePrivateFileToDocs` / `handleDocToPrivate` / `handleMoveLink` with the appropriate private folder string.
+
+**Private link subfolder format:** Links in the private tab store their location in `document_links.folder`. Root-level private links use `folder = '__private__'`. Links inside a private subfolder use `folder = '__private__/SubfolderPath'`. The GET filter in `/api/links` treats both as private (visible only to creator/admin). The dashboard computes `currentPrivateFolder = privateActiveSubfolder ? \`__private__/${privateActiveSubfolder}\` : '__private__'` to filter the correct links for the current view level.
 
 **Pitch deck tab:** Admins and employees can upload a PDF directly from the Pitch Deck tab. Upload replaces the existing pitch deck (`pitch_deck/current.pdf` in Supabase Storage). All approved users can view it via a signed URL fetched from `/api/pitch-deck`.
 
@@ -158,11 +160,13 @@ All document views are logged to `audit_log` table. Last-opened timestamps per u
 - **No lock styling** on restricted docs in grid — restricted badge shown instead; clicking redirects to NDA
 - **Action bar** (below upload zone, above content): back button left + New folder button right (blue); always rendered when `activeFolder` is set
 - **New folder button**: bright blue styling (`rgba(59,130,246,0.15)` bg, `#93c5fd` text)
-- **Drag-and-drop**: files, subfolders, and links can be dragged to sidebar folders AND to subfolder rows/cards in the main content area; `draggingDoc` / `draggingFolder` / `draggingLink` states
+- **Drag-and-drop**: files, subfolders, and links can be dragged to sidebar folders AND to subfolder rows/cards in the main content area; `draggingDoc` / `draggingFolder` / `draggingLink` / `draggingPrivateFile` / `draggingPrivateFolder` states
   - `handleMoveDoc` and `handleMoveFolder` clamp the target prefix up to the source's restriction level (`RESTRICTION_LEVEL = { general:0, restricted:1, internal:2 }`) so an `internal/` file dragged to a `general/` folder stays at `internal/`; the API enforces the same demotion guard as a second layer
   - `handleMoveLink` calls `PATCH /api/links` with `{ id, folder }` and updates `links` state from the server response
-  - Links in the documents tab render in 5 separate branches — all five have `draggable`, `onDragStart`, `onDragEnd`; private-tab links are not draggable to document folders
+  - Links in the documents tab render in 5 separate branches — all five have `draggable`, `onDragStart`, `onDragEnd`
   - Subfolder rows/cards (both list and grid, both subfolders-only and combined views) have `onDragOver`/`onDragLeave`/`onDrop` handlers in addition to the sidebar
+  - **Cross-prefix drag-and-drop**: `draggingPrivateFile` and `draggingDoc`/`draggingLink` can be dragged between the private tab and general/internal folders. `handlePrivateFileToDocs` (private→docs) and `handleDocToPrivate` (docs→private) both use `/api/documents/move`. `private→restricted` is blocked server-side. Private subfolders in sidebar and content area accept `draggingDoc`, `draggingLink`, `draggingPrivateFile`, `draggingPrivateFolder` as drop targets. The PRIVATE root header in the sidebar is also a drop target.
+  - **Private folder drag-and-drop**: `draggingPrivateFolder` state tracks which private subfolder card is being dragged. `handleMovePrivateSubfolder(sourceSub, targetParentSub)` moves all files and `.keep` placeholders to the new parent path, updates `privateActiveSubfolder` if user was inside the moved folder, then reloads tree and files. Guards prevent moving a folder into itself or its own descendants.
 
 ### NDA Flow
 
@@ -198,6 +202,18 @@ Dashboard shows a spotlight tutorial on first login (tracked via `profiles.has_s
    - `nda/page.js:25` — `useEffect` calls `completeNda` declared below; also missing from the deps array (separate warning)
    - `dashboard/page.js:1144` — `window.location.href = '/nda'` flagged as "This value cannot be modified"; this is a linter false positive on a valid redirect pattern. Either suppress with an `eslint-disable-next-line` or rewrite as `router.push('/nda')` for consistency with the rest of the file.
    - **Fix approach**: hoist each `async function loadX` into a `useCallback` (or move them above the effects that call them). Cleanest is probably extracting them to module-scope helpers that take `setX` setters as args, but that's a bigger refactor.
+
+### Recent Fixes (sessions 2026-06-01 – 2026-06-08)
+
+1. **FOLDERS section collapsed by default** — `foldersGroupOpen` initial state changed from `true` to `false`; the sidebar FOLDERS group is now collapsed on first load.
+2. **Link rename missing from two menus** — The three-dot menu for links in the "links-only folder" branch and the "subfolder list-view" branch were missing the Rename option. Added Rename button to both menus so all five link-render branches are consistent.
+3. **Private file drag-and-drop** — Added `draggingPrivateFile` and `dragOverPrivateFolder` states. Grid and list private file rows now have `draggable`/`onDragStart`/`onDragEnd`. Private subfolder content cards and PRIVATE sidebar root accept `draggingPrivateFile` drops.
+4. **Private link drag-and-drop within private tab** — Private link rows in private tab now have `draggable`/`onDragStart`/`onDragEnd`. Private links with `folder = '__private__/subPath'` are now shown in the matching private subfolder view (filter uses `currentPrivateFolder` instead of always `'__private__'`). The `!privateActiveSubfolder` guard was removed from the private links rendering block.
+5. **Cross-prefix moves for private files** — `/api/documents/move` extended: now accepts `private/` as source or destination (with ownership check), blocks `private→restricted`, allows all other cross-prefix combos involving private. Two new client functions: `handlePrivateFileToDocs` and `handleDocToPrivate`. General/internal sidebar folders/subfolders now respond to `draggingPrivateFile`; PRIVATE root and private content-area subfolders now respond to `draggingDoc`.
+6. **Cross-prefix moves for private links** — `/api/links` PATCH now accepts `folder = '__private__'` or `folder = '__private__/subPath'` (sets `internal=false, restricted=false`, requires owner-or-admin). GET filter updated to treat `folder.startsWith('__private__/')` as private. Moving a non-private link to private also requires owner-or-admin. General/internal sidebar folders respond to `draggingLink` from private tab; private subfolders respond to `draggingLink` from documents tab.
+7. **Private folder drag-and-drop** — Added `draggingPrivateFolder` state and `handleMovePrivateSubfolder(sourceSub, targetParentSub)` function. Private subfolder cards in the content area now have `draggable`/`onDragStart`/`onDragEnd`. Drop handlers in content area, sidebar, and PRIVATE root all accept `draggingPrivateFolder`. Guards prevent dropping onto self or own descendants. Function fetches recursive folder tree, moves all files and `.keep` sentinels to new path, updates `privateActiveSubfolder` if user was inside the moved folder, then reloads tree and files.
+8. **`renameFolder` prefix fallback fixed** — The `else` branch (runs when `folderFullPath` is not found in `prevFolderPaths`) previously defaulted to `'general'` for empty subfolders with no matched files. Now also searches `prevFolderPaths` for any sibling path under the same top-level folder to infer the correct prefix (internal/restricted/general) before falling back to `'general'`. Prevents empty internal subfolders from getting their `.keep` placed under `general/` after rename.
+9. **`renameFolder` link records updated on rename** — After all file moves succeed, `renameFolder` now PATCHes every link whose `folder` equals `oldFullPath` or starts with `oldFullPath + '/'` to point to `newFullPath`. Uses server response to update `links` state (re-derives `internal`/`restricted` flags from storage). Applies to general, restricted, and internal subfolders.
 
 ### Recent Fixes (session 2026-05-27)
 

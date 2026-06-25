@@ -41,13 +41,31 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Account creation failed' }, { status: 400 })
     }
 
-    // Defense-in-depth: if the DB trigger happens to copy a different role
-    // (or no role at all), overwrite the profile here with the sanitized value.
-    // status stays 'pending' until an admin approves.
-    await supabase
+    // Guarantee a complete profile row regardless of whether the
+    // on_auth_user_created DB trigger fired. upsert inserts the row when the
+    // trigger is missing/broken, or updates it (sanitizing the role) when the
+    // trigger already created it. Previously this was a plain .update(), which
+    // silently matched zero rows if the trigger hadn't run — leaving the user
+    // authenticated but profile-less: unable to log in and invisible to the
+    // admin approval list. status stays 'pending' until an admin approves.
+    const { error: profileError } = await supabase
       .from('profiles')
-      .update({ role, full_name: fullName.trim() })
-      .eq('id', data.user.id)
+      .upsert({
+        id: data.user.id,
+        email: email.trim(),
+        full_name: fullName.trim(),
+        role,
+        status: 'pending',
+        email_verified: false,
+      }, { onConflict: 'id' })
+
+    if (profileError) {
+      // The profile row could not be created, so don't report success. Roll
+      // back the orphaned auth user so the email isn't left half-registered
+      // (which would block a clean retry), then surface a real error.
+      await supabase.auth.admin.deleteUser(data.user.id)
+      return NextResponse.json({ error: 'Account creation failed' }, { status: 500 })
+    }
 
     return NextResponse.json({ success: true })
   } catch {

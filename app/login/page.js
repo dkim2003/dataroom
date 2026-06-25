@@ -23,6 +23,19 @@ export default function LoginPage() {
 
   const fullGreeting = "Welcome to SpaceLaunch. I'm Sol, here to guide you through the data room.";
 
+  // Surface a notice passed via query param (e.g. when the dashboard bounces a
+  // user back because their email isn't confirmed yet). Read window.location
+  // directly to avoid useSearchParams/Suspense boilerplate.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('notice') === 'confirm_email') {
+      setStep('login');
+      setError('Please confirm your email first — check your inbox for the access link sent by the administrator.');
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }, []);
+
   // Typewriter effect for Sol's greeting
   useEffect(() => {
     if (step !== 'greeting') return;
@@ -51,27 +64,37 @@ export default function LoginPage() {
       return;
     }
 
-    const { data: profile } = await supabase
+    const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('status, email_verified')
       .eq('id', data.user.id)
       .single();
 
-    if (profile?.status === 'pending') {
+    // A missing/unreadable profile row means the account is half-created (e.g.
+    // the signup trigger never ran). Don't misreport this as an email-
+    // confirmation problem — point the user at the administrator instead.
+    if (profileError || !profile) {
+      await supabase.auth.signOut();
+      setError('Your account setup is incomplete. Please contact the administrator at contact@kimduhyun.com.');
+      setLoading(false);
+      return;
+    }
+
+    if (profile.status === 'pending') {
       await supabase.auth.signOut();
       setPending(true);
       setLoading(false);
       return;
     }
 
-    if (profile?.status === 'rejected') {
+    if (profile.status === 'rejected') {
       await supabase.auth.signOut();
       setRejected(true);
       setLoading(false);
       return;
     }
 
-    if (!profile?.email_verified) {
+    if (!profile.email_verified) {
       await supabase.auth.signOut();
       setError('Please confirm your email first — check your inbox for the access link sent by the administrator.');
       setLoading(false);
@@ -115,7 +138,9 @@ export default function LoginPage() {
     // Sign in to verify they own the account
     const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
     if (signInError) {
-      setError('This email is already registered. Check your password and try again.');
+      setError(signInError.message === 'Email not confirmed'
+        ? 'Your email address has not been confirmed yet. Please check your inbox for a confirmation link, or contact the administrator if you did not receive one.'
+        : 'This email is already registered. Check your password and try again.');
       setLoading(false);
       return;
     }
